@@ -37,11 +37,18 @@ parser.add_argument(
     "--seed", type=int, default=42, help="Random seed for reproducibility"
 )
 
+parser.add_argument(
+    "--use_wandb",
+    action="store_true",
+    help="Use Weights & Biases for experiment tracking"
+)
+
 args = parser.parse_args()
 dataset_name = args.dataset_name
 split = args.split
 split_similarity_threshold = args.split_similarity_threshold
 seed = args.seed
+use_wandb = args.use_wandb
 
 
 def set_seed(seed=42):
@@ -645,7 +652,7 @@ def main():
         num_workers=4,
         models_dir="./models",
         device="cuda" if torch.cuda.is_available() else "cpu",
-        use_wandb=True  # Enable wandb
+        use_wandb=use_wandb
     )
 
 
