@@ -8,6 +8,7 @@ import random
 import torch.optim as optim
 import numpy as np
 import wandb
+import torch.nn as nn
 from datetime import datetime
 
 parser = argparse.ArgumentParser()
@@ -36,7 +37,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--max_clusters", type=int, default=5, help="Maximum number of clusters for PnC partitioner"
+    "--max_clusters", type=int, default=15, help="Maximum number of clusters for PnC partitioner"
 )
 
 parser.add_argument(
@@ -51,10 +52,37 @@ parser.add_argument(
     "--tau_decay", type=float, default=0.95, help="Temperature decay rate for Gumbel-Softmax"
 )
 
+# NEW ARGUMENTS for k-hop connectivity and GCN layers
+parser.add_argument(
+    "--k_hop", type=int, default=2, help="k-hop neighborhood constraint for connectivity"
+)
+
+parser.add_argument(
+    "--enable_connectivity", action="store_true", default=True, 
+    help="Enable k-hop connectivity constraint (default: True)"
+)
+
+parser.add_argument(
+    "--disable_connectivity", dest="enable_connectivity", action="store_false",
+    help="Disable k-hop connectivity constraint"
+)
+
+parser.add_argument(
+    "--num_gcn_layers", type=int, default=2, help="Number of GCN layers for inter-cluster message passing"
+)
+
 parser.add_argument(
     "--use_wandb",
     action="store_true",
     help="Use Weights & Biases for experiment tracking"
+)
+
+parser.add_argument(
+    "--cluster_size_max", type=int, default=3, help="Maximum nodes per cluster for PnC partitioner"
+)
+
+parser.add_argument(
+    "--nhid", type=int, default=50, help="Hidden dimension for partitioner context network"
 )
 
 args = parser.parse_args()
@@ -66,6 +94,11 @@ max_clusters = args.max_clusters
 tau_init = args.tau_init
 tau_min = args.tau_min
 tau_decay = args.tau_decay
+k_hop = args.k_hop
+enable_connectivity = args.enable_connectivity
+num_gcn_layers = args.num_gcn_layers
+cluster_size_max = args.cluster_size_max
+nhid = args.nhid
 use_wandb = args.use_wandb
 
 
@@ -87,7 +120,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
     model_id = f"pnc_{dataset_name}_{split}_{split_similarity_threshold}_{timestamp}"
     run_models_dir = os.path.join(models_dir, model_id)
     
-    # Initialize wandb
+    # Initialize wandb with NEW parameters
     if use_wandb:
         run_name = f"pnc_hard_gumbel_{dataset_name}_{split}_{split_similarity_threshold}"
         wandb.init(
@@ -104,6 +137,11 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
                 "tau_init": tau_init,
                 "tau_min": tau_min,
                 "tau_decay": tau_decay,
+                "k_hop": k_hop,
+                "enable_connectivity": enable_connectivity,
+                "num_gcn_layers": num_gcn_layers,
+                "cluster_size_max": cluster_size_max,  # NEW
+                "nhid": nhid,                          # NEW
                 "model_type": "GVPHardGumbelPnC"
             }
         )
@@ -123,6 +161,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
     print(f"Model ID: {model_id}")
     print(f"Models will be saved to: {run_models_dir}")
     print(f"PnC parameters: max_clusters={max_clusters}, tau_init={tau_init}, tau_min={tau_min}, tau_decay={tau_decay}")
+    print(f"Cluster parameters: cluster_size_max={cluster_size_max}, k_hop={k_hop}, enable_connectivity={enable_connectivity}")
 
     for epoch in range(epochs):
         # Training
@@ -130,7 +169,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
         train_loss, train_acc, train_metrics = train_epoch_pnc(model, train_loader, optimizer, device)
         
         print(f"EPOCH {epoch} TRAIN loss: {train_loss:.4f} acc: {train_acc:.4f}")
-        print(f"  Temperature: {train_metrics['temperature']:.4f}, Avg clusters: {train_metrics['avg_clusters']:.2f}")
+        print(f"  Temperature: {train_metrics['temperature']:.4f}, Avg clusters: {train_metrics['avg_clusters']:.2f}, Avg cluster size: {train_metrics['avg_cluster_size']:.2f}")
         
         # Validation
         model.eval()
@@ -138,7 +177,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
             val_loss, val_acc, val_metrics = evaluate_model_pnc(model, val_loader, device)
         
         print(f"EPOCH {epoch} VAL loss: {val_loss:.4f} acc: {val_acc:.4f}")
-        print(f"  Temperature: {val_metrics['temperature']:.4f}, Avg clusters: {val_metrics['avg_clusters']:.2f}")
+        print(f"  Temperature: {val_metrics['temperature']:.4f}, Avg clusters: {val_metrics['avg_clusters']:.2f}, Avg cluster size: {val_metrics['avg_cluster_size']:.2f}")
         
         # Update temperature schedule
         model.update_epoch()
@@ -172,7 +211,9 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
                 "val_acc": val_acc,
                 "temperature": train_metrics['temperature'],
                 "train_avg_clusters": train_metrics['avg_clusters'],
-                "val_avg_clusters": val_metrics['avg_clusters']
+                "val_avg_clusters": val_metrics['avg_clusters'],
+                "train_avg_cluster_size": train_metrics['avg_cluster_size'],  # NEW
+                "val_avg_cluster_size": val_metrics['avg_cluster_size']       # NEW
             })
         
         # Display current top models
@@ -202,7 +243,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
         test_loss, test_acc, test_metrics = evaluate_model_pnc(model, test_loader, device)
         
     print(f"TEST loss: {test_loss:.4f} acc: {test_acc:.4f}")
-    print(f"Test temperature: {test_metrics['temperature']:.4f}, Avg clusters: {test_metrics['avg_clusters']:.2f}")
+    print(f"Test temperature: {test_metrics['temperature']:.4f}, Avg clusters: {test_metrics['avg_clusters']:.2f}, Avg cluster size: {test_metrics['avg_cluster_size']:.2f}")
     print(f"Best validation accuracy: {best_val_acc:.4f} (epoch {best_epoch})")
     
     # Save run summary
@@ -213,6 +254,10 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
         f.write(f"Dataset: {dataset_name}\n")
         f.write(f"Split: {split} (threshold: {split_similarity_threshold})\n")
         f.write(f"Max clusters: {max_clusters}\n")
+        f.write(f"Cluster size max: {cluster_size_max}\n")                    # NEW
+        f.write(f"k-hop constraint: {k_hop} (enabled: {enable_connectivity})\n")
+        f.write(f"GCN layers: {num_gcn_layers}\n")
+        f.write(f"Hidden dimension: {nhid}\n")                               # NEW
         f.write(f"Temperature params: init={tau_init}, min={tau_min}, decay={tau_decay}\n")
         f.write(f"Training epochs: {epochs}\n")
         f.write(f"Learning rate: {lr}\n")
@@ -221,6 +266,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
         f.write(f"Test accuracy: {test_acc:.4f}\n")
         f.write(f"Final temperature: {test_metrics['temperature']:.4f}\n")
         f.write(f"Average clusters used: {test_metrics['avg_clusters']:.2f}\n")
+        f.write(f"Average cluster size: {test_metrics['avg_cluster_size']:.2f}\n")  # NEW
     
     print(f"Run summary saved to: {summary_path}")
     
@@ -231,6 +277,7 @@ def train_pnc_model(model, train_dataset, val_dataset, test_dataset,
             "test_acc": test_acc,
             "test_temperature": test_metrics['temperature'],
             "test_avg_clusters": test_metrics['avg_clusters'],
+            "test_avg_cluster_size": test_metrics['avg_cluster_size'],  # NEW
             "best_val_acc": best_val_acc,
             "best_epoch": best_epoch
         })
@@ -251,6 +298,7 @@ def evaluate_model_pnc(model, dataloader, device):
     
     # Track PnC-specific metrics
     total_clusters = 0
+    total_cluster_nodes = 0  # NEW: Track total nodes in clusters
     total_graphs = 0
     current_temp = model.partitioner.get_temperature()
     
@@ -280,10 +328,14 @@ def evaluate_model_pnc(model, dataloader, device):
         # Track clustering metrics
         batch_size = logits.size(0)
         
-        # Count actual clusters used (non-zero assignments)
+        # Count actual clusters used and cluster sizes
         for b in range(batch_size):
-            clusters_used = (assignment_matrix[b].sum(dim=0) > 0).sum().item()
+            cluster_sizes = assignment_matrix[b].sum(dim=0)  # [max_clusters] - nodes per cluster
+            clusters_used = (cluster_sizes > 0).sum().item()
+            nodes_in_clusters = cluster_sizes.sum().item()
+            
             total_clusters += clusters_used
+            total_cluster_nodes += nodes_in_clusters
             total_graphs += 1
         
         # Update progress bar
@@ -300,10 +352,12 @@ def evaluate_model_pnc(model, dataloader, device):
     avg_loss = total_loss / total_samples
     avg_acc = total_correct / total_samples
     avg_clusters = total_clusters / total_graphs if total_graphs > 0 else 0
+    avg_cluster_size = total_cluster_nodes / total_clusters if total_clusters > 0 else 0  # NEW
     
     metrics = {
         'temperature': current_temp,
-        'avg_clusters': avg_clusters
+        'avg_clusters': avg_clusters,
+        'avg_cluster_size': avg_cluster_size  # NEW
     }
     
     return avg_loss, avg_acc, metrics
@@ -319,6 +373,7 @@ def train_epoch_pnc(model, dataloader, optimizer, device):
     
     # Track PnC-specific metrics
     total_clusters = 0
+    total_cluster_nodes = 0  # NEW: Track total nodes in clusters
     total_graphs = 0
     current_temp = model.partitioner.get_temperature()
     
@@ -354,10 +409,14 @@ def train_epoch_pnc(model, dataloader, optimizer, device):
         # Track clustering metrics
         batch_size = logits.size(0)
         
-        # Count actual clusters used (non-zero assignments)
+        # Count actual clusters used and cluster sizes
         for b in range(batch_size):
-            clusters_used = (assignment_matrix[b].sum(dim=0) > 0).sum().item()
+            cluster_sizes = assignment_matrix[b].sum(dim=0)  # [max_clusters] - nodes per cluster
+            clusters_used = (cluster_sizes > 0).sum().item()
+            nodes_in_clusters = cluster_sizes.sum().item()
+            
             total_clusters += clusters_used
+            total_cluster_nodes += nodes_in_clusters
             total_graphs += 1
         
         # Update progress bar
@@ -374,10 +433,12 @@ def train_epoch_pnc(model, dataloader, optimizer, device):
     avg_loss = total_loss / total_samples
     avg_acc = total_correct / total_samples
     avg_clusters = total_clusters / total_graphs if total_graphs > 0 else 0
+    avg_cluster_size = total_cluster_nodes / total_clusters if total_clusters > 0 else 0  # NEW
     
     metrics = {
         'temperature': current_temp,
-        'avg_clusters': avg_clusters
+        'avg_clusters': avg_clusters,
+        'avg_cluster_size': avg_cluster_size  # NEW
     }
     
     return avg_loss, avg_acc, metrics
@@ -395,7 +456,7 @@ def main():
         data_dir="./data",
     )
 
-    # Create PnC model with custom temperature parameters
+    # Create PnC model with ALL parameters matching part_model_PnC.py
     model = GVPHardGumbelPartitionerModel(
         node_in_dim=(6, 3),
         node_h_dim=(100, 16),   
@@ -409,16 +470,35 @@ def main():
         max_clusters=max_clusters
     )
     
-    # Set custom temperature parameters if provided
+    # Update partitioner parameters to match arguments
     if hasattr(model, 'partitioner'):
         model.partitioner.tau_init = tau_init
         model.partitioner.tau_min = tau_min
         model.partitioner.tau_decay = tau_decay
+        model.partitioner.k_hop = k_hop
+        model.partitioner.cluster_size_max = cluster_size_max
+        model.partitioner.enable_connectivity = enable_connectivity
+        
+        # Update context network hidden dimension if nhid is provided
+        if nhid != model.partitioner.context_gru.hidden_size:
+            ns = model.partitioner.selection_mlp[0].in_features - nhid  # nfeat
+            model.partitioner.context_gru = nn.GRU(ns, nhid, batch_first=True)
+            model.partitioner.context_init = nn.Linear(ns, nhid)
+            model.partitioner.selection_mlp = nn.Sequential(
+                nn.Linear(ns + nhid, nhid),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(nhid, 1)
+            )
 
     print(f"Dataset: {dataset_name}")
     print(f"Split: {split}")
     print(f"Number of classes: {num_classes}")
     print(f"PnC max clusters: {max_clusters}")
+    print(f"Cluster size max: {cluster_size_max}")
+    print(f"k-hop constraint: {k_hop} (enabled: {enable_connectivity})")
+    print(f"GCN layers: {num_gcn_layers}")
+    print(f"Hidden dimension: {nhid}")
     print(f"Temperature schedule: init={tau_init}, min={tau_min}, decay={tau_decay}")
 
     train_pnc_model(

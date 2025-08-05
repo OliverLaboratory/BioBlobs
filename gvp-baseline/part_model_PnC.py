@@ -29,10 +29,13 @@ class SimpleGCN(nn.Module):
 
 
 class HardGumbelPartitioner(nn.Module):
-    """Hard Gumbel-Softmax Partitioner replacing DiffPool"""
-    def __init__(self, nfeat, max_clusters, nhid):
+    """Hard Gumbel-Softmax Partitioner with Neighbor Expansion + k-Hop Relaxation"""
+    def __init__(self, nfeat, max_clusters, nhid, k_hop=2, cluster_size_max=30, enable_connectivity=True):
         super().__init__()
         self.max_clusters = max_clusters
+        self.k_hop = k_hop
+        self.cluster_size_max = cluster_size_max
+        self.enable_connectivity = enable_connectivity
         
         # Selection network (replaces DiffPool assignment)
         self.selection_mlp = nn.Sequential(
@@ -54,6 +57,79 @@ class HardGumbelPartitioner(nn.Module):
         
     def get_temperature(self):
         return max(self.tau_min, self.tau_init * (self.tau_decay ** self.epoch))
+        
+    def compute_k_hop_mask(self, adj, seed_node_idx, k):
+        """
+        Compute k-hop neighborhood mask for a single seed node
+        Args:
+            adj: [max_N, max_N] - Single protein adjacency matrix
+            seed_node_idx: int - Seed node index  
+            k: int - Number of hops
+        Returns:
+            mask: [max_N] - Boolean mask for k-hop neighborhood
+        """
+        if k == 0:
+            # Only seed node is selectable
+            mask = torch.zeros(adj.size(0), dtype=torch.bool, device=adj.device)
+            mask[seed_node_idx] = True
+            return mask
+            
+        # Use matrix multiplication to compute k-hop reachability
+        # Start with direct neighbors (1-hop)
+        reachable = torch.zeros(adj.size(0), dtype=torch.bool, device=adj.device)
+        reachable[seed_node_idx] = True  # Include seed node
+        
+        current_nodes = torch.zeros(adj.size(0), dtype=torch.bool, device=adj.device)
+        current_nodes[seed_node_idx] = True
+        
+        # Iteratively expand to k-hops
+        for hop in range(k):
+            # Find neighbors of current nodes
+            neighbor_mask = torch.matmul(current_nodes.float(), adj) > 0
+            new_nodes = neighbor_mask & (~reachable)  # Only new nodes
+            
+            if not new_nodes.any():
+                break  # No more nodes to expand to
+                
+            reachable = reachable | neighbor_mask
+            current_nodes = new_nodes
+            
+        return reachable
+    
+    def select_from_candidates(self, x_batch, context_batch, candidate_mask, tau):
+        """
+        Select one node from candidates using Hard Gumbel-Softmax with pre-filtering
+        Args:
+            x_batch: [max_N, D] - Node features for single protein
+            context_batch: [max_N, H] - Context features for single protein  
+            candidate_mask: [max_N] - Boolean mask for candidate nodes
+            tau: float - Temperature for Gumbel-Softmax
+        Returns:
+            selected_idx: int - Global index of selected node (-1 if no candidates)
+        """
+        candidate_indices = torch.where(candidate_mask)[0]
+        
+        if len(candidate_indices) == 0:
+            return -1
+            
+        # Pre-filtering: extract features only for candidates
+        candidate_features = x_batch[candidate_indices]  # [N_candidates, D]
+        candidate_context = context_batch[candidate_indices]  # [N_candidates, H]
+        
+        # Compute logits only for candidates (no information leakage)
+        combined_features = torch.cat([candidate_features, candidate_context], dim=-1)
+        candidate_logits = self.selection_mlp(combined_features).squeeze(-1)  # [N_candidates]
+        
+        if len(candidate_logits) == 1:
+            # Only one candidate, select deterministically
+            return candidate_indices[0].item()
+            
+        # Hard Gumbel-Softmax selection
+        selection_probs = self.gumbel_softmax_hard(candidate_logits, tau)
+        selected_local_idx = selection_probs.argmax()
+        selected_global_idx = candidate_indices[selected_local_idx]
+        
+        return selected_global_idx.item()
     
     def gumbel_softmax_hard(self, logits, tau):
         """Hard Gumbel-Softmax with straight-through estimator"""
@@ -95,55 +171,81 @@ class HardGumbelPartitioner(nn.Module):
         assignment_matrix = torch.zeros(batch_size, max_nodes, self.max_clusters, device=device)
         cluster_history = torch.zeros(batch_size, 0, feat_dim, device=device)
         
-        # Iterative clustering (similar to your max_iterations)
+        # Iterative clustering with multi-node cluster formation
         for cluster_idx in range(self.max_clusters):
-            # Check if any nodes remain
+            # Check if any nodes remain across all proteins
             if not available_mask.any():
                 break
                 
-            # Expand context to all available nodes
-            expanded_context = global_context.unsqueeze(1).expand(-1, max_nodes, -1)  # [B, max_N, H]
+            cluster_nodes_batch = []  # List of selected nodes per protein in this cluster
+            cluster_embeddings_batch = torch.zeros(batch_size, feat_dim, device=device)
             
-            # Compute selection logits for available nodes only
-            combined_features = torch.cat([x, expanded_context], dim=-1)  # [B, max_N, D+H]
-            logits = self.selection_mlp(combined_features).squeeze(-1)  # [B, max_N]
-            
-            # Mask out unavailable nodes
-            logits = logits.masked_fill(~available_mask, float('-inf'))
-            
-            # Select one node per protein using hard Gumbel-Softmax
-            selections = torch.zeros_like(available_mask, dtype=torch.float)  # [B, max_N]
-            
+            # Process each protein in batch
             for b in range(batch_size):
-                if available_mask[b].any():
-                    batch_logits = logits[b][available_mask[b]]  # [N_available_b]
-                    if len(batch_logits) > 0:
-                        # Hard Gumbel-Softmax selection
-                        selection_probs = self.gumbel_softmax_hard(batch_logits, tau)
-                        selected_local_idx = selection_probs.argmax()
+                if not available_mask[b].any():
+                    cluster_nodes_batch.append([])
+                    continue
+                    
+                cluster_nodes = []  # Nodes selected for this cluster in protein b
+                
+                # Step 1: Select seed node (free selection from available nodes)
+                expanded_context = global_context[b].unsqueeze(0).expand(max_nodes, -1)  # [max_N, H]
+                seed_idx = self.select_from_candidates(
+                    x[b], expanded_context, available_mask[b], tau
+                )
+                
+                if seed_idx == -1:
+                    cluster_nodes_batch.append([])
+                    continue
+                    
+                cluster_nodes.append(seed_idx)
+                available_mask[b, seed_idx] = False
+                
+                # Step 2: Expand cluster using k-hop neighbors (if enabled and cluster_size_max > 1)
+                if self.enable_connectivity and self.cluster_size_max > 1:
+                    # Compute k-hop neighborhood around seed
+                    k_hop_mask = self.compute_k_hop_mask(adj[b], seed_idx, self.k_hop)
+                    
+                    # Iteratively select additional nodes from k-hop neighborhood
+                    for additional_node in range(self.cluster_size_max - 1):
+                        # Restrict candidates to available nodes within k-hop neighborhood
+                        cluster_candidates = available_mask[b] & k_hop_mask
                         
-                        # Map back to global index
-                        available_indices = torch.where(available_mask[b])[0]
-                        selected_global_idx = available_indices[selected_local_idx]
-                        selections[b, selected_global_idx] = 1.0
+                        if not cluster_candidates.any():
+                            break  # No more candidates in k-hop neighborhood
+                            
+                        # Select next node using pre-filtering
+                        next_idx = self.select_from_candidates(
+                            x[b], expanded_context, cluster_candidates, tau
+                        )
                         
-                        # Update assignment matrix
-                        assignment_matrix[b, selected_global_idx, cluster_idx] = 1.0
+                        if next_idx == -1:
+                            break
+                            
+                        cluster_nodes.append(next_idx)
+                        available_mask[b, next_idx] = False
+                
+                cluster_nodes_batch.append(cluster_nodes)
+                
+                # Update assignment matrix for this protein
+                for node_idx in cluster_nodes:
+                    assignment_matrix[b, node_idx, cluster_idx] = 1.0
+                    
+                # Compute cluster embedding (mean of selected nodes)
+                if cluster_nodes:
+                    cluster_node_features = x[b, cluster_nodes]  # [cluster_size, D]
+                    cluster_embeddings_batch[b] = cluster_node_features.mean(dim=0)
             
-            # Extract cluster embeddings (selected nodes only)
-            cluster_emb = (selections.unsqueeze(-1) * x).sum(dim=1)  # [B, D]
-            cluster_embeddings.append(cluster_emb)
+            # Store cluster embeddings for this iteration
+            cluster_embeddings.append(cluster_embeddings_batch)
             
             # Update cluster history
-            cluster_history = torch.cat([cluster_history, cluster_emb.unsqueeze(1)], dim=1)  # [B, T+1, D]
+            cluster_history = torch.cat([cluster_history, cluster_embeddings_batch.unsqueeze(1)], dim=1)
             
             # Update global context using GRU memory
             if cluster_history.size(1) > 0:
                 _, context_hidden = self.context_gru(cluster_history, context_hidden)
                 global_context = context_hidden.squeeze(0)  # [B, H]
-            
-            # Remove selected nodes from available mask
-            available_mask = available_mask & (selections <= 0.5)
         
         if not cluster_embeddings:
             # Fallback: single cluster with mean pooling
@@ -203,7 +305,14 @@ class GVPHardGumbelPartitionerModel(nn.Module):
             GVP(node_h_dim, (ns, 0)))  # Extract scalar features only
         
         # Hard Gumbel-Softmax Partitioner (replaces your BatchedDiffPool)
-        self.partitioner = HardGumbelPartitioner(nfeat=ns, max_clusters=max_clusters, nhid=ns//2)
+        self.partitioner = HardGumbelPartitioner(
+            nfeat=ns, 
+            max_clusters=max_clusters, 
+            nhid=ns//2,
+            k_hop=2,                    # 2-hop spatial constraint
+            cluster_size_max=3,         # Max 3 nodes per cluster
+            enable_connectivity=True    # Enable spatial constraints
+        )
         
         # Cluster GCN for inter-cluster message passing (same as your example)
         self.cluster_gcn = nn.Sequential(
@@ -318,7 +427,16 @@ model = GVPHardGumbelPartitionerModel(
     max_clusters=5           # Maximum number of clusters
 )
 
+# The partitioner automatically uses:
+# - k_hop=2: 2-hop spatial constraint for cluster formation
+# - cluster_size_max=3: Maximum 3 nodes per cluster
+# - enable_connectivity=True: Enforce spatial connectivity within clusters
+
 # Forward pass
 logits, assignment_matrix = model(h_V, edge_index, h_E, seq=seq, batch=batch)
+# assignment_matrix[b, n, c] = 1 if node n in protein b belongs to cluster c
+
 loss = model.compute_total_loss(logits, labels)
+
+# For interpretability: assignment_matrix shows which residues form each functional cluster
 """
