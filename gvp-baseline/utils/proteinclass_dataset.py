@@ -550,6 +550,7 @@ def get_dataset(
         print(f"Sequence length: {len(structures[0]['seq'])}")
         print(f"Number of residue coordinates: {len(structures[0]['coords'])}")
         print(f"Label: {structures[0]['label']}")
+        print(f"Number of proteins: {len(structures)}")
 
         assert len(set(s["label"] for s in structures)) == num_classes
 

@@ -2,7 +2,7 @@ from tqdm import tqdm
 import json
 import os
 import argparse
-from proteinclass_dataset import ProteinClassificationDataset, print_example_data, create_dataloader
+from utils.proteinclass_dataset import ProteinClassificationDataset, print_example_data, create_dataloader
 from baseline_model import BaselineGVPModel
 import torch
 import random

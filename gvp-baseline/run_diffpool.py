@@ -2,7 +2,7 @@ from tqdm import tqdm
 import json
 import os
 import argparse
-from proteinclass_dataset import ProteinClassificationDataset, print_example_data, create_dataloader, \
+from utils.proteinclass_dataset import ProteinClassificationDataset, print_example_data, create_dataloader, \
 get_dataset, generator_to_structures
 from part_model_diffpool_graphsage import GVPDiffPoolGraphSAGEModel  # Import the new model
 import torch
