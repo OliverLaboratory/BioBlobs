@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch_geometric.data import Data, Batch
 from torch_geometric.utils import dense_to_sparse
-from part_model_PnC import GVPHardGumbelPartitionerModel
+from arxiv.part_model_PnC import GVPHardGumbelPartitionerModel
 
 # Import your model (adjust import path as needed)
 # from your_model_file import GVPHardGumbelPartitionerModel

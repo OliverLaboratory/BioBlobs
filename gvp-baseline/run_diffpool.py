@@ -4,7 +4,7 @@ import os
 import argparse
 from utils.proteinclass_dataset import ProteinClassificationDataset, print_example_data, create_dataloader, \
 get_dataset, generator_to_structures
-from part_model_diffpool_graphsage import GVPDiffPoolGraphSAGEModel  # Import the new model
+from diffpool_part import GVPDiffPoolGraphSAGEModel  # Import the new model
 import torch
 import random
 import torch.optim as optim

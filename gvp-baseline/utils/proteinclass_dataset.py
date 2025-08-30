@@ -1,6 +1,7 @@
 import json
 import numpy as np
-import tqdm, random
+import random
+from tqdm import tqdm
 import torch, math
 import torch.utils.data as data
 import torch.nn.functional as F
@@ -8,6 +9,9 @@ import torch_geometric
 import torch_cluster
 from torch_geometric.loader import DataLoader
 import os
+from collections import defaultdict
+from math import inf
+from typing import Dict, Iterable, List
 
 def _normalize(tensor, dim=-1):
     """
@@ -108,7 +112,7 @@ class ProteinClassificationDataset(data.Dataset):
         {
             "name": "protein_id",
             "seq": "SEQUENCE",
-            "coords": [[[x,y,z],...], ...],
+            "coords": [[[x,y,z],...], ...],  # N, CA, C atoms only (3 atoms per residue)
             "label": class_id  # Integer label for classification
         },
         ...
@@ -186,7 +190,7 @@ class ProteinClassificationDataset(data.Dataset):
             mask = torch.isfinite(coords.sum(dim=(1, 2)))
             coords[~mask] = np.inf
 
-            X_ca = coords[:, 1]  # CA coordinates
+            X_ca = coords[:, 1]  # CA coordinates (index 1 in N, CA, C)
             edge_index = torch_cluster.knn_graph(X_ca, k=self.top_k)
 
             pos_embeddings = self._positional_embeddings(edge_index)
@@ -226,8 +230,9 @@ class ProteinClassificationDataset(data.Dataset):
 
     def _dihedrals(self, X, eps=1e-7):
         # From https://github.com/jingraham/neurips19-graph-protein-design
+        # Updated to work with N, CA, C atoms only (3 atoms per residue)
 
-        X = torch.reshape(X[:, :3], [3 * X.shape[0], 3])
+        X = torch.reshape(X, [3 * X.shape[0], 3])  # Use all 3 atoms: N, CA, C
         dX = X[1:] - X[:-1]
         U = _normalize(dX, dim=-1)
         u_2 = U[:-2]
@@ -273,7 +278,8 @@ class ProteinClassificationDataset(data.Dataset):
         return torch.cat([forward.unsqueeze(-2), backward.unsqueeze(-2)], -2)
 
     def _sidechains(self, X):
-        n, origin, c = X[:, 0], X[:, 1], X[:, 2]
+        # Updated to work with N, CA, C atoms only (3 atoms per residue)
+        n, origin, c = X[:, 0], X[:, 1], X[:, 2]  # N, CA, C atoms
         c, n = _normalize(c - origin), _normalize(n - origin)
         bisector = _normalize(c + n)
         perp = _normalize(torch.linalg.cross(c, n))
@@ -291,188 +297,138 @@ def print_example_data(data):
     print(f"Label (y): {data.y.item() if data.y is not None else 'N/A'}")
 
 
-# Data(x=X_ca, seq=seq, name=name,
-#     node_s=node_s, node_v=node_v,
-#     edge_s=edge_s, edge_v=edge_v,
-#     edge_index=edge_index, mask=mask,
-#     y=y)
 
+BACKBONE = ("N", "CA", "C")
+INF3 = (float("inf"), float("inf"), float("inf"))
 
-
-def generator_to_structures(generator, dataset_name="enzymecommission"):
+def generator_to_structures(generator: Iterable[dict], dataset_name: str = "enzymecommission"):
     """
-    Convert generator of proteins to list of structures with name, sequence, and coordinates.
-    Missing backbone atoms get infinite coordinates and will be filtered by ProteinGraphDataset.
-
-    Args:
-        generator: Generator yielding protein data dictionaries
-
-    Returns:
-        list: List of dictionaries with 'name', 'seq', 'coords', and 'label' keys
+    Convert a generator of proteins to a list of structures with name, sequence, coordinates, and label.
+    - Missing backbone atoms get (inf, inf, inf) and can be filtered downstream.
+    - Only uses N, CA, C atoms (O atom is not needed for structural features).
+    - Labels are assigned incrementally (single pass, no pre-scan).
     """
-    structures = []
-    labels_set = set()
-    temp_data = []
-
-    # Track processing statistics
-    filtering_stats = {
-        "total_processed": 0,
-        "successful": 0,
-        "partial_residues": 0,
-        "zero_length_coords": 0,
-    }
-    partial_proteins = []
-
-    # First pass: collect all data and extract unique labels
-    print("First pass: collecting data and labels...")
-    for protein_data in tqdm(generator, desc="Collecting data"):
-        temp_data.append(protein_data)
-
-        protein_info = protein_data["protein"]
+    # --- helpers -------------------------------------------------------------
+    def extract_label(info: dict) -> str:
         if dataset_name == "enzymecommission":
-            label = protein_info["EC"].split(".")[0]
+            return info["EC"].split(".")[0]
         elif dataset_name == "proteinfamily":
-            label = protein_info["Pfam"][0]
+            return info["Pfam"][0]
+        elif dataset_name == "scope":
+            return info["SCOP-FA"][0]
+        elif dataset_name == "geneontology":
+            return info["molecular_function"][0]
+        
+        raise ValueError(f"Unsupported dataset_name: {dataset_name}")
 
-        labels_set.add(label)
+    # --- state ---------------------------------------------------------------
+    token_map: Dict[str, int] = {}
+    next_token = 0
 
-    # Create label mapping
-    token_map = {label: i for i, label in enumerate(sorted(list(labels_set)))}
-    print(f"Found {len(labels_set)} unique labels: {sorted(list(labels_set))}")
+    structures: List[dict] = []
+    partial_proteins: List[dict] = []
+    filtering_stats = dict(
+        total_processed=0,
+        successful=0,
+        partial_residues=0,
+        filtered_out=0  # <-- new counter
+    )
 
-    # Second pass: process the collected data
-    print("Second pass: processing structures...")
-    for protein_data in tqdm(temp_data, desc="Converting proteins"):
+    # --- main loop (single pass) --------------------------------------------
+    for protein_data in generator:
         filtering_stats["total_processed"] += 1
 
-        # Extract protein information
         protein_info = protein_data["protein"]
         atom_info = protein_data["atom"]
 
-        # Get basic information
+        # label mapping on-the-fly
+        raw_label = extract_label(protein_info)
+        if raw_label not in token_map:
+            token_map[raw_label] = next_token
+            next_token += 1
+        label = token_map[raw_label]
+
         name = protein_info["ID"]
         seq = protein_info["sequence"]
 
-        if dataset_name == "enzymecommission":
-            label = token_map[protein_info["EC"].split(".")[0]]
-        elif dataset_name == "proteinfamily":
-            label = token_map[protein_info["Pfam"][0]]
-
-        # Extract atom data
-        x_coords = atom_info["x"]
-        y_coords = atom_info["y"]
-        z_coords = atom_info["z"]
+        x, y, z = atom_info["x"], atom_info["y"], atom_info["z"]
         atom_types = atom_info["atom_type"]
         residue_numbers = atom_info["residue_number"]
 
-        # Group atoms by residue number
-        residues = {}
-        total_residues = len(set(residue_numbers))
+        # group atoms by residue -> backbone atom -> coord
+        residues = defaultdict(dict)  # res_num -> {atom_type: (x,y,z)}
+        for ax, ay, az, at, rn in zip(x, y, z, atom_types, residue_numbers):
+            if at in BACKBONE and at not in residues[rn]:
+                residues[rn][at] = (ax, ay, az)
 
-        for i in range(len(x_coords)):
-            res_num = residue_numbers[i]
-            atom_type = atom_types[i]
-            coord = [x_coords[i], y_coords[i], z_coords[i]]
-
-            if res_num not in residues:
-                residues[res_num] = {}
-
-            # Take the first occurrence of each backbone atom type per residue
-            if (
-                atom_type in ["N", "CA", "C", "O"]
-                and atom_type not in residues[res_num]
-            ):
-                residues[res_num][atom_type] = coord
-
-        # Build coords array in residue order
-        coords = []
-        complete_residues = 0
-
-        for res_num in sorted(residues.keys()):
-            backbone_atoms = residues[res_num]
-            missing_atoms = [
-                atom for atom in ["N", "CA", "C", "O"] if atom not in backbone_atoms
-            ]
-
-            # Always create residue coordinates, using inf for missing atoms
-            residue_coords = []
-            is_complete = True
-
-            for atom_type in ["N", "CA", "C", "O"]:
-                if atom_type in backbone_atoms:
-                    residue_coords.append(backbone_atoms[atom_type])
-                else:
-                    residue_coords.append([float("inf"), float("inf"), float("inf")])
-                    is_complete = False
-
-            coords.append(residue_coords)
-
-            if is_complete:
-                complete_residues += 1
-
-        # Only filter if we have absolutely no coordinates
-        if len(coords) == 0:
-            filtering_stats["zero_length_coords"] += 1
+        if not residues:
+            filtering_stats["filtered_out"] += 1  # <-- increment counter
             continue
 
-        # Track proteins with partial residues for statistics
-        completion_rate = (
-            complete_residues / total_residues if total_residues > 0 else 0
-        )
+        # build coords in residue order, fill missing with INF3
+        coords = []
+        complete = 0
+        for rn in sorted(residues):
+            entry = residues[rn]
+            residue_coords = [entry.get(at, INF3) for at in BACKBONE]  # N, CA, C only
+            if all(at in entry for at in BACKBONE):  # Check if N, CA, C are all present
+                complete += 1
+            coords.append(residue_coords)
+
+        total_res = len(residues)
+        completion_rate = complete / total_res if total_res else 0.0
+
+        if completion_rate < 0.8:
+            print(f"FILTERED OUT: {name} - completion rate {completion_rate:.2f} ({complete}/{total_res}) for N,CA,C atoms")
+            filtering_stats["filtered_out"] += 1  # <-- increment counter
+            continue
+
         if completion_rate < 1.0:
             filtering_stats["partial_residues"] += 1
             partial_proteins.append(
-                {
-                    "name": name,
-                    "total_residues": total_residues,
-                    "complete_residues": complete_residues,
-                    "completion_rate": completion_rate,
-                }
-            )
-
-            if completion_rate < 0.1:  # Less than 10% complete - might want to warn
-                print(
-                    f"WARNING: {name} - Very low completion rate: {complete_residues}/{total_residues} ({completion_rate:.2f})"
+                dict(
+                    name=name,
+                    total_residues=total_res,
+                    complete_residues=complete,
+                    completion_rate=completion_rate,
                 )
+            )
+            if completion_rate < 0.10:
+                print(f"WARNING: {name} - very low completion: {complete}/{total_res} ({completion_rate:.2f}) for N,CA,C atoms")
 
-        # All proteins are now processed (none filtered)
         filtering_stats["successful"] += 1
 
-        # Truncate sequence to match coords if necessary
-        adjusted_seq = seq[: len(coords)] if len(seq) > len(coords) else seq
+        # align sequence to number of residues we actually built
+        if len(seq) > len(coords):
+            seq = seq[: len(coords)]
 
-        structure = {
-            "name": name,
-            "seq": adjusted_seq,
-            "coords": coords,
-            "label": label,
-        }
-        structures.append(structure)
+        structures.append(dict(name=name, seq=seq, coords=coords, label=label))
 
-    # Print detailed statistics
-    print(f"\n{'=' * 50}")
+    # --- summary -------------------------------------------------------------
+    print("\n" + "=" * 50)
     print("PROCESSING SUMMARY")
-    print(f"{'=' * 50}")
+    print("=" * 50)
     print(f"Total proteins processed: {filtering_stats['total_processed']}")
     print(f"Successfully converted: {filtering_stats['successful']}")
-    print(f"With partial residues: {filtering_stats['partial_residues']}")
-    print(
-        f"Success rate: {filtering_stats['successful'] / filtering_stats['total_processed']:.3f}"
-    )
+    print(f"Filtered out🚫: {filtering_stats['filtered_out']}")
+    print(f"With invalid residues: {filtering_stats['partial_residues']}")
+    if filtering_stats["total_processed"]:
+        print(f"Success rate: {filtering_stats['successful'] / filtering_stats['total_processed']:.3f}")
 
     if partial_proteins:
-        print("\nProteins with incomplete backbone atoms:")
-        print(f"{'Protein Name':<15} {'Complete/Total':<15} {'Completion Rate':<15}")
-        print("-" * 50)
-        for pp in partial_proteins[:10]:  # Show first 10
-            comp_total = f"{pp['complete_residues']}/{pp['total_residues']}"
-            comp_rate = f"{pp['completion_rate']:.3f}"
-            print(f"{pp['name']:<15} {comp_total:<15} {comp_rate:<15}")
-
+        print("\nProteins with incomplete backbone atoms (N, CA, C):")
+        print(f"{'Protein Name':<20} {'Complete/Total':<18} {'Completion Rate':<16}")
+        print("-" * 60)
+        for pp in partial_proteins[:5]:
+            ct = f"{pp['complete_residues']}/{pp['total_residues']}"
+            cr = f"{pp['completion_rate']:.3f}"
+            print(f"{pp['name']:<20} {ct:<18} {cr:<16}")
         if len(partial_proteins) > 10:
             print(f"... and {len(partial_proteins) - 10} more")
 
     return structures
+
+
 
 
 def get_dataset(
@@ -498,7 +454,6 @@ def get_dataset(
             split=split, split_similarity_threshold=split_similarity_threshold
         )
         dataset = task.dataset
-        print("Number of proteins:", task.size)
         num_classes = task.num_classes
         train_index, val_index, test_index = (
             task.train_index,
@@ -534,64 +489,125 @@ def get_dataset(
             task.test_index,
         )
 
+    elif dataset_name == "geneontology":
+        from proteinshake.tasks import GeneOntologyTask
+
+        task = GeneOntologyTask(
+            split=split, split_similarity_threshold=split_similarity_threshold
+        )
+        dataset = task.dataset
+        num_classes = task.num_classes
+        train_index, val_index, test_index = (
+            task.train_index,
+            task.val_index,
+            task.test_index,
+        )
+
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
-    # Create data directory if it doesn't exist
+    print(f"✅ Number of proteins: {task.size} in: {dataset_name} before splitting")
+
+    # Debug the task split information
+    print(f"\n" + "=" * 50)
+    print("TASK SPLIT INFO")
+    print("=" * 50)
+    print(f"Task dataset size: {task.size}")
+    print(f"Task num_classes: {task.num_classes}")
+    print(f"Split index lengths - Train: {len(train_index)}, Val: {len(val_index)}, Test: {len(test_index)}")
+    print(f"⚠️ Total indices in splits: {len(train_index) + len(val_index) + len(test_index)}")
+
     os.makedirs(data_dir, exist_ok=True)
 
-    # Check if JSON file already exists
-    json_path = os.path.join(data_dir, f"{dataset_name}.json")
-    if os.path.exists(json_path):
-        with open(json_path, "r") as f:
-            structures = json.load(f)
-        print(f"JSON file {json_path} already exists. Skipping conversion.")
-        print(f"First protein: {structures[0]['name']}")
-        print(f"Sequence length: {len(structures[0]['seq'])}")
-        print(f"Number of residue coordinates: {len(structures[0]['coords'])}")
-        print(f"Label: {structures[0]['label']}")
-        print(f"Number of proteins: {len(structures)}")
+    # Convert generator to list for indexing
+    protein_list = list(dataset.proteins(resolution="atom"))
 
-        assert len(set(s["label"] for s in structures)) == num_classes
+    # Analyze split indices coverage
+    all_indices = set(range(len(protein_list)))
+    train_indices_set = set(train_index)
+    val_indices_set = set(val_index)
+    test_indices_set = set(test_index)
+    used_indices = train_indices_set | val_indices_set | test_indices_set
+    missing_indices = all_indices - used_indices
+    
+    print(f"\n" + "=" * 50)
+    print("⚠️ SPLIT INDICES CHECK")
+    print("=" * 50)
+    print(f"Total protein indices available: {len(all_indices)}")
+    print(f"Train indices: {len(train_indices_set)}")
+    print(f"Val indices: {len(val_indices_set)}")
+    print(f"Test indices: {len(test_indices_set)}")
+    print(f"Total indices used in splits: {len(used_indices)}")
+    print(f"⚠️ Missing indices (not in any split): {len(missing_indices)}")
+    
+    if missing_indices:
+        # print(f"First 10 missing indices: {sorted(list(missing_indices))[:10]}")
+        # Show some protein IDs that are missing
+        missing_proteins = []
+        for idx in sorted(list(missing_indices))[:5]:
+            try:
+                protein_data = protein_list[idx]
+                protein_id = protein_data["protein"]["ID"]
+                missing_proteins.append(protein_id)
+            except:
+                missing_proteins.append(f"idx_{idx}")
+        print(f"Sample missing protein IDs: {missing_proteins}")
 
+    # Check for overlaps between splits
+    train_val_overlap = train_indices_set & val_indices_set
+    train_test_overlap = train_indices_set & test_indices_set
+    val_test_overlap = val_indices_set & test_indices_set
+    
+    if train_val_overlap or train_test_overlap or val_test_overlap:
+        print(f"WARNING: Split overlaps detected!")
+        print(f"Train-Val overlap: {len(train_val_overlap)}")
+        print(f"Train-Test overlap: {len(train_test_overlap)}")
+        print(f"Val-Test overlap: {len(val_test_overlap)}")
+
+    # Split the protein list using indices
+    train_proteins = [protein_list[i] for i in train_index]
+    val_proteins = [protein_list[i] for i in val_index]
+    test_proteins = [protein_list[i] for i in test_index]
+    
+    print(f"Split sizes - Train: {len(train_proteins)}, Val: {len(val_proteins)}, Test: {len(test_proteins)}")
+    print(f"Total split size: {len(train_proteins) + len(val_proteins) + len(test_proteins)}")
+
+    # Check if JSON files exist, load if available, else generate and save
+    train_json = os.path.join(data_dir, f"{dataset_name}_train.json")
+    val_json = os.path.join(data_dir, f"{dataset_name}_val.json")
+    test_json = os.path.join(data_dir, f"{dataset_name}_test.json")
+
+    if os.path.exists(train_json) and os.path.exists(val_json) and os.path.exists(test_json):
+        print("Loading train/val/test structures from existing JSON files.")
+        with open(train_json, "r") as f:
+            train_structures = json.load(f)
+        with open(val_json, "r") as f:
+            val_structures = json.load(f)
+        with open(test_json, "r") as f:
+            test_structures = json.load(f)
     else:
-        # Convert generator to structures list
-        protein_generator = dataset.proteins(resolution="atom")
-        print("Number of atom level proteins:", len(protein_generator))
+        print("Generating train/val/test structures and saving to JSON files.")
+        train_structures = generator_to_structures(train_proteins, dataset_name=dataset_name)
+        val_structures = generator_to_structures(val_proteins, dataset_name=dataset_name)
+        test_structures = generator_to_structures(test_proteins, dataset_name=dataset_name)
+        with open(train_json, "w") as f:
+            json.dump(train_structures, f, indent=2)
+        with open(val_json, "w") as f:
+            json.dump(val_structures, f, indent=2)
+        with open(test_json, "w") as f:
+            json.dump(test_structures, f, indent=2)
 
-        structures = generator_to_structures(
-            protein_generator, dataset_name=dataset_name
-        )
-
-        print(f"Processed {len(structures)} proteins")
-        if structures:
-            print(f"First protein: {structures[0]['name']}")
-            print(f"Sequence length: {len(structures[0]['seq'])}")
-            print(f"Number of residue coordinates: {len(structures[0]['coords'])}")
-            print(f"Label: {structures[0]['label']}")
-
-        # Save structures to JSON file
-        with open(json_path, "w") as f:
-            json.dump(structures, f, indent=2)
-
-        print(f"Saved {len(structures)} proteins to {json_path}")
-
-    # Create subset data lists using indices
-    train_structures = [structures[i] for i in train_index]
-    val_structures = [structures[i] for i in val_index]
-    test_structures = [structures[i] for i in test_index]
-
-    # Create separate datasets for each split
-    train_dataset = ProteinClassificationDataset(
-        train_structures, num_classes=num_classes
-    )
+    # Create datasets
+    train_dataset = ProteinClassificationDataset(train_structures, num_classes=num_classes)
     val_dataset = ProteinClassificationDataset(val_structures, num_classes=num_classes)
-    test_dataset = ProteinClassificationDataset(
-        test_structures, num_classes=num_classes
-    )
+    test_dataset = ProteinClassificationDataset(test_structures, num_classes=num_classes)
 
     print(f"Train dataset size: {len(train_dataset)}")
     print(f"Validation dataset size: {len(val_dataset)}")
     print(f"Test dataset size: {len(test_dataset)}")
+    
+    total_final = len(train_dataset) + len(val_dataset) + len(test_dataset)
+    print(f"number of proteins in {dataset_name}: {total_final} after preprocessing")
+
 
     return train_dataset, val_dataset, test_dataset, num_classes

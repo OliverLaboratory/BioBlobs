@@ -1,7 +1,7 @@
 import os
 import argparse
 from utils.proteinclass_dataset import create_dataloader, get_dataset
-from efficient_pnc import GVPGradientSafeHardGumbelModel  # Changed import to efficient_pnc
+from arxiv.efficient_pnc import GVPGradientSafeHardGumbelModel  # Changed import to efficient_pnc
 import torch
 import torch.nn as nn
 from utils.utils import set_seed  
@@ -12,7 +12,7 @@ parser.add_argument(
     "--dataset_name",
     type=str,
     default="enzymecommission",
-    choices=["enzymecommission", "proteinfamily", "scope"],
+    choices=["enzymecommission", "proteinfamily", "scope", "geneontology"],
 )
 
 parser.add_argument(
@@ -134,79 +134,79 @@ def main():
         data_dir="./data",
     )
 
-    # Create efficient PnC model
-    model = GVPGradientSafeHardGumbelModel(
-        node_in_dim=(6, 3),
-        node_h_dim=(100, 16),   
-        edge_in_dim=(32, 1),
-        edge_h_dim=(32, 1),
-        num_classes=num_classes,
-        seq_in=False,
-        num_layers=3,
-        drop_rate=0.1,
-        pooling="sum",
-        max_clusters=max_clusters,
-        termination_threshold=termination_threshold  # Add termination threshold
-    )
+    # # Create efficient PnC model
+    # model = GVPGradientSafeHardGumbelModel(
+    #     node_in_dim=(6, 3),
+    #     node_h_dim=(100, 16),   
+    #     edge_in_dim=(32, 1),
+    #     edge_h_dim=(32, 1),
+    #     num_classes=num_classes,
+    #     seq_in=False,
+    #     num_layers=3,
+    #     drop_rate=0.1,
+    #     pooling="sum",
+    #     max_clusters=max_clusters,
+    #     termination_threshold=termination_threshold  # Add termination threshold
+    # )
     
-    # Update partitioner parameters to match command line arguments
-    if hasattr(model, 'partitioner'):
-        model.partitioner.tau_init = tau_init
-        model.partitioner.tau_min = tau_min
-        model.partitioner.tau_decay = tau_decay
-        model.partitioner.k_hop = k_hop
-        model.partitioner.cluster_size_max = cluster_size_max
-        model.partitioner.enable_connectivity = enable_connectivity
-        model.partitioner.termination_threshold = termination_threshold
+    # # Update partitioner parameters to match command line arguments
+    # if hasattr(model, 'partitioner'):
+    #     model.partitioner.tau_init = tau_init
+    #     model.partitioner.tau_min = tau_min
+    #     model.partitioner.tau_decay = tau_decay
+    #     model.partitioner.k_hop = k_hop
+    #     model.partitioner.cluster_size_max = cluster_size_max
+    #     model.partitioner.enable_connectivity = enable_connectivity
+    #     model.partitioner.termination_threshold = termination_threshold
         
-        # Update context network hidden dimension if needed
-        current_nhid = model.partitioner.context_gru.hidden_size
-        if nhid != current_nhid:
-            ns = model.partitioner.selection_mlp[0].in_features - current_nhid  # nfeat
+    #     # Update context network hidden dimension if needed
+    #     current_nhid = model.partitioner.context_gru.hidden_size
+    #     if nhid != current_nhid:
+    #         ns = model.partitioner.selection_mlp[0].in_features - current_nhid  # nfeat
             
-            # Recreate networks with new hidden dimension
-            model.partitioner.context_gru = nn.GRU(ns, nhid, batch_first=True)
-            model.partitioner.context_init = nn.Linear(ns, nhid)
-            model.partitioner.selection_mlp = nn.Sequential(
-                nn.Linear(ns + nhid, nhid),
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(nhid, 1)
-            )
-            model.partitioner.size_predictor = nn.Sequential(
-                nn.Linear(ns + nhid + 1, nhid),  # +1 for max_possible_size
-                nn.ReLU(),
-                nn.Dropout(0.1),
-                nn.Linear(nhid, model.partitioner.cluster_size_max - model.partitioner.cluster_size_min + 1)
-            )
+    #         # Recreate networks with new hidden dimension
+    #         model.partitioner.context_gru = nn.GRU(ns, nhid, batch_first=True)
+    #         model.partitioner.context_init = nn.Linear(ns, nhid)
+    #         model.partitioner.selection_mlp = nn.Sequential(
+    #             nn.Linear(ns + nhid, nhid),
+    #             nn.ReLU(),
+    #             nn.Dropout(0.1),
+    #             nn.Linear(nhid, 1)
+    #         )
+    #         model.partitioner.size_predictor = nn.Sequential(
+    #             nn.Linear(ns + nhid + 1, nhid),  # +1 for max_possible_size
+    #             nn.ReLU(),
+    #             nn.Dropout(0.1),
+    #             nn.Linear(nhid, model.partitioner.cluster_size_max - model.partitioner.cluster_size_min + 1)
+    #         )
 
-    print(f"Dataset: {dataset_name}")
-    print(f"Split: {split}")
-    print(f"Number of classes: {num_classes}")
-    print(f"Model: GVPGradientSafeHardGumbelModel (Efficient PnC)")
-    print(f"PnC max clusters: {max_clusters}")
-    print(f"Cluster size max: {cluster_size_max}")
-    print(f"k-hop constraint: {k_hop} (enabled: {enable_connectivity})")
-    print(f"GCN layers: {num_gcn_layers}")
-    print(f"Hidden dimension: {nhid}")
-    print(f"Termination threshold: {termination_threshold}")
-    print(f"Temperature schedule: init={tau_init}, min={tau_min}, decay={tau_decay}")
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # print(f"Dataset: {dataset_name}")
+    # print(f"Split: {split}")
+    # print(f"Number of classes: {num_classes}")
+    # print(f"Model: GVPGradientSafeHardGumbelModel (Efficient PnC)")
+    # print(f"PnC max clusters: {max_clusters}")
+    # print(f"Cluster size max: {cluster_size_max}")
+    # print(f"k-hop constraint: {k_hop} (enabled: {enable_connectivity})")
+    # print(f"GCN layers: {num_gcn_layers}")
+    # print(f"Hidden dimension: {nhid}")
+    # print(f"Termination threshold: {termination_threshold}")
+    # print(f"Temperature schedule: init={tau_init}, min={tau_min}, decay={tau_decay}")
+    # print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    train_pnc_model(
-        model,
-        train_dataset,
-        val_dataset,
-        test_dataset,
-        args,
-        epochs=150,
-        lr=1e-4,
-        batch_size=64,
-        num_workers=4,
-        models_dir="./models",
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        use_wandb=use_wandb
-    )
+    # train_pnc_model(
+    #     model,
+    #     train_dataset,
+    #     val_dataset,
+    #     test_dataset,
+    #     args,
+    #     epochs=150,
+    #     lr=1e-4,
+    #     batch_size=64,
+    #     num_workers=4,
+    #     models_dir="./models",
+    #     device="cuda" if torch.cuda.is_available() else "cpu",
+    #     use_wandb=use_wandb
+    # )
 
 
 if __name__ == "__main__":

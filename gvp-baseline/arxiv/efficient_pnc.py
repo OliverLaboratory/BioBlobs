@@ -8,6 +8,9 @@ import gvp
 from gvp.models import GVP, GVPConvLayer, LayerNorm
 import numpy as np
 from typing import Tuple, List, Dict, Optional
+from utils.VQCodebook import VQCodebookEMA
+
+
 
 class SimpleGCN(nn.Module):
     """Simple GCN layer for cluster message passing"""

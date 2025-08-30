@@ -1,31 +1,40 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv
 from torch_geometric.utils import to_dense_batch, to_dense_adj
 from torch_scatter import scatter_mean, scatter_sum, scatter_max
-import gvp
-from gvp.models import GVP, GVPConvLayer, LayerNorm
 
 class SimpleGCN(nn.Module):
-    """Simple GCN layer for cluster message passing (same as your example)"""
-    def __init__(self, in_dim, out_dim):
+    """A single GCN layer with row-normalized dense adjacency.
+
+    Args:
+        in_dim (int): Input feature dimension.
+        out_dim (int): Output feature dimension.
+
+    Forward:
+        x (Tensor): [B, N, F_in] node features.
+        adj (Tensor): [B, N, N] dense adjacency, no assumption about self-loops.
+
+    Returns:
+        Tensor: [B, N, F_out] features after one propagation step and ReLU.
+    """
+    def __init__(self, in_dim: int, out_dim: int):
         super().__init__()
         self.linear = nn.Linear(in_dim, out_dim)
-        
-    def forward(self, x, adj):
-        # x: [batch_size, num_clusters, features]
-        # adj: [batch_size, num_clusters, num_clusters]
-        
-        # Normalize adjacency matrix (add self-loops and degree normalization)
-        adj = adj + torch.eye(adj.size(-1), device=adj.device).unsqueeze(0)
-        degree = adj.sum(dim=-1, keepdim=True)
-        adj_norm = adj / (degree + 1e-8)
-        
-        # Message passing: A * X * W
-        h = torch.matmul(adj_norm, x)
-        h = self.linear(h)
-        return F.relu(h)
+
+    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
+        # Add self-loops and row-normalize (avoid div-by-zero)
+        bsz, n, _ = x.shape
+        device = x.device
+        adj = adj + torch.eye(n, device=device).unsqueeze(0)
+        degree = adj.sum(dim=-1, keepdim=True).clamp_min_(1e-8)
+        adj_norm = adj / degree
+
+        # Message passing: A_norm X W
+        h = adj_norm @ x
+        return F.relu(self.linear(h))
+
 
 
 class HardGumbelPartitioner(nn.Module):
