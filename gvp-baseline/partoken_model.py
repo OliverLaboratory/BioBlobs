@@ -8,394 +8,17 @@ from gvp.models import GVP, GVPConvLayer, LayerNorm
 from typing import Tuple, Optional
 import numpy as np
 from utils.VQCodebook import VQCodebookEMA
+from utils.inter_cluster import InterClusterModel
+from utils.pnc_partition import Partitioner
 
 
-class SimpleGCN(nn.Module):
-    """
-    Simple GCN layer for inter-cluster message passing.
-    
-    Args:
-        in_dim: Input feature dimension
-        out_dim: Output feature dimension
-    """
-    
-    def __init__(self, in_dim: int, out_dim: int):
-        super().__init__()
-        self.linear = nn.Linear(in_dim, out_dim)
-        
-    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of simple GCN.
-        
-        Args:
-            x: Node features [batch_size, num_clusters, features]
-            adj: Adjacency matrix [batch_size, num_clusters, num_clusters]
-            
-        Returns:
-            Updated node features
-        """
-        # Add self-loops and normalize adjacency matrix
-        eye = torch.eye(adj.size(-1), device=adj.device, dtype=adj.dtype)
-        adj_with_self_loops = adj + eye.unsqueeze(0)
-        
-        # Degree normalization
-        degree = adj_with_self_loops.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-        adj_norm = adj_with_self_loops / degree
-        
-        # Message passing: A * X * W
-        h = torch.bmm(adj_norm, x)
-        return F.relu(self.linear(h))
-
-
-class ClusterGCN(nn.Module):
-    """
-    Multi-layer GCN for inter-cluster message passing.
-    
-    Args:
-        in_dim: Input feature dimension
-        hidden_dim: Hidden feature dimension
-        drop_rate: Dropout rate
-    """
-    
-    def __init__(self, in_dim: int, hidden_dim: int, drop_rate: float = 0.1):
-        super().__init__()
-        self.gcn1 = SimpleGCN(in_dim, hidden_dim)
-        self.dropout1 = nn.Dropout(drop_rate)
-        self.gcn2 = SimpleGCN(hidden_dim, hidden_dim)
-        self.dropout2 = nn.Dropout(drop_rate)
-        
-    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through cluster GCN.
-        
-        Args:
-            x: Cluster features [B, num_clusters, features]
-            adj: Cluster adjacency [B, num_clusters, num_clusters]
-            
-        Returns:
-            Refined cluster features
-        """
-        h = self.gcn1(x, adj)
-        h = self.dropout1(h)
-        h = self.gcn2(h, adj)
-        h = self.dropout2(h)
-        return h
-
-
-class OptimizedPartitioner(nn.Module):
-    """
-    Optimized Hard Gumbel-Softmax Partitioner with efficient clustering.
-    
-    This class implements a streamlined version of the partitioner that focuses on
-    efficiency while maintaining gradient flow and clustering quality.
-    
-    Args:
-        nfeat: Number of input features
-        max_clusters: Maximum number of clusters
-        nhid: Hidden dimension size
-        k_hop: Number of hops for spatial constraints
-        cluster_size_max: Maximum cluster size
-        termination_threshold: Threshold for early termination
-    """
-    
-    def __init__(
-        self, 
-        nfeat: int, 
-        max_clusters: int, 
-        nhid: int, 
-        k_hop: int = 2, 
-        cluster_size_max: int = 3,
-        termination_threshold: float = 0.95
-    ):
-        super().__init__()
-        self.max_clusters = max_clusters
-        self.k_hop = k_hop
-        self.cluster_size_max = cluster_size_max
-        self.cluster_size_min = 1
-        self.termination_threshold = termination_threshold
-        
-        # Simplified selection network
-        self.seed_selector = nn.Sequential(
-            nn.Linear(nfeat + nhid, nhid),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Linear(nhid, 1)
-        )
-        
-        # Size prediction network
-        self.size_predictor = nn.Sequential(
-            nn.Linear(nfeat + nhid, nhid),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Linear(nhid, self.cluster_size_max)
-        )
-        
-        # Context encoder (simplified from GRU)
-        self.context_encoder = nn.Linear(nfeat, nhid)
-        
-        # Temperature parameters
-        self.register_buffer('epoch', torch.tensor(0))
-        self.tau_init = 1.0
-        self.tau_min = 0.1
-        self.tau_decay = 0.95
-        
-    def get_temperature(self) -> float:
-        """Get current temperature for Gumbel-Softmax annealing."""
-        return max(self.tau_min, self.tau_init * (self.tau_decay ** self.epoch))
-    
-    def _compute_k_hop_neighbors(
-        self, 
-        adj: torch.Tensor, 
-        seed_indices: torch.Tensor, 
-        mask: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Efficiently compute k-hop neighborhoods for seed nodes.
-        
-        Args:
-            adj: Adjacency matrix [B, N, N]
-            seed_indices: Seed node indices [B]
-            mask: Valid node mask [B, N]
-            
-        Returns:
-            k_hop_mask: Boolean mask for k-hop neighborhoods [B, N]
-        """
-        B, N, _ = adj.shape
-        device = adj.device
-        
-        # Initialize with seed nodes
-        current_mask = torch.zeros(B, N, dtype=torch.bool, device=device)
-        reachable_mask = torch.zeros(B, N, dtype=torch.bool, device=device)
-        
-        # Set seed nodes
-        valid_seeds = seed_indices >= 0
-        current_mask[valid_seeds, seed_indices[valid_seeds]] = True
-        reachable_mask = current_mask.clone()
-        
-        # Iteratively expand k hops
-        for _ in range(self.k_hop):
-            # Find neighbors efficiently
-            neighbors = torch.bmm(current_mask.float().unsqueeze(1), adj).squeeze(1) > 0
-            neighbors = neighbors & mask & (~reachable_mask)
-            
-            if not neighbors.any():
-                break
-                
-            current_mask = neighbors
-            reachable_mask = reachable_mask | neighbors
-            
-        return reachable_mask
-    
-    def _gumbel_softmax_selection(
-        self, 
-        logits: torch.Tensor, 
-        tau: float, 
-        mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """
-        Efficient Hard Gumbel-Softmax selection.
-        
-        Args:
-            logits: Selection logits [B, N]
-            tau: Temperature parameter
-            mask: Valid selection mask [B, N]
-            
-        Returns:
-            Hard selection with straight-through gradients [B, N]
-        """
-        if mask is not None:
-            logits = logits.masked_fill(~mask, -1e9)
-        
-        # Gumbel noise
-        gumbel = -torch.log(-torch.log(torch.rand_like(logits) + 1e-8) + 1e-8)
-        noisy_logits = (logits + gumbel) / tau
-        
-        # Soft selection for gradients
-        soft = F.softmax(noisy_logits, dim=-1)
-        
-        # Hard selection for forward pass
-        hard = torch.zeros_like(soft)
-        indices = soft.argmax(dim=-1, keepdim=True)
-        hard.scatter_(-1, indices, 1.0)
-        
-        # Straight-through estimator
-        return hard + (soft - soft.detach())
-    
-    def _check_termination(
-        self, 
-        assignment_matrix: torch.Tensor, 
-        mask: torch.Tensor, 
-        cluster_idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Check termination condition efficiently.
-        
-        Args:
-            assignment_matrix: Current assignments [B, N, S]
-            mask: Valid node mask [B, N]
-            cluster_idx: Current cluster index
-            
-        Returns:
-            should_terminate: Boolean mask [B]
-            active_proteins: Boolean mask [B]
-        """
-        total_nodes = mask.sum(dim=-1).float()
-        assigned_nodes = assignment_matrix[:, :, :cluster_idx+1].sum(dim=(1, 2))
-        coverage = assigned_nodes / (total_nodes + 1e-8)
-        
-        should_terminate = coverage >= self.termination_threshold
-        active_proteins = (~should_terminate) & (total_nodes > 0)
-        
-        return should_terminate, active_proteins
-    
-    def forward(
-        self, 
-        x: torch.Tensor, 
-        adj: torch.Tensor, 
-        mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Optimized forward pass for clustering.
-        
-        Args:
-            x: Dense node features [B, N, D]
-            adj: Dense adjacency matrix [B, N, N]
-            mask: Node validity mask [B, N]
-            
-        Returns:
-            cluster_features: Cluster representations [B, S, D]
-            cluster_adj: Inter-cluster adjacency [B, S, S]
-            assignment_matrix: Node-to-cluster assignments [B, N, S]
-        """
-        B, N, D = x.shape
-        device = x.device
-        tau = self.get_temperature()
-        
-        # Initialize efficiently
-        available_mask = mask.clone()
-        global_context = self.context_encoder(x.masked_fill(~mask.unsqueeze(-1), 0).mean(dim=1))
-        
-        cluster_embeddings = []
-        assignment_matrix = torch.zeros(B, N, self.max_clusters, device=device)
-        terminated = torch.zeros(B, dtype=torch.bool, device=device)
-        
-        for cluster_idx in range(self.max_clusters):
-            # Early global termination
-            if not available_mask.any() or terminated.all():
-                break
-                
-            # Check per-protein termination
-            if cluster_idx > 0:
-                should_terminate, active = self._check_termination(
-                    assignment_matrix, mask, cluster_idx - 1
-                )
-                terminated = terminated | should_terminate
-                if not active.any():
-                    break
-            else:
-                active = torch.ones(B, dtype=torch.bool, device=device)
-            
-            # Seed selection
-            context_expanded = global_context.unsqueeze(1).expand(-1, N, -1)
-            combined_features = torch.cat([x, context_expanded], dim=-1)
-            seed_logits = self.seed_selector(combined_features).squeeze(-1)
-            
-            selection_mask = available_mask & active.unsqueeze(-1)
-            seed_selection = self._gumbel_softmax_selection(seed_logits, tau, selection_mask)
-            seed_indices = seed_selection.argmax(dim=-1)
-            
-            # Update availability
-            has_selection = selection_mask.sum(dim=-1) > 0
-            valid_seeds = has_selection & active
-            
-            if valid_seeds.any():
-                # Assign seeds
-                assignment_matrix[valid_seeds, seed_indices[valid_seeds], cluster_idx] = 1.0
-                
-                # Update availability efficiently
-                for b in range(B):
-                    if valid_seeds[b]:
-                        available_mask[b, seed_indices[b]] = False
-                
-                # Expand clusters with k-hop neighbors
-                if self.cluster_size_max > 1:
-                    k_hop_mask = self._compute_k_hop_neighbors(adj, seed_indices, mask)
-                    candidates = available_mask & k_hop_mask & active.unsqueeze(-1)
-                    
-                    if candidates.any():
-                        # Predict additional cluster size
-                        seed_features = x[valid_seeds, seed_indices[valid_seeds]]
-                        context_features = global_context[valid_seeds]
-                        
-                        size_input = torch.cat([seed_features, context_features], dim=-1)
-                        size_logits = self.size_predictor(size_input)
-                        size_probs = F.softmax(size_logits / tau, dim=-1)
-                        predicted_sizes = (size_probs * torch.arange(1, self.cluster_size_max + 1, 
-                                                                    device=device).float()).sum(dim=-1)
-                        
-                        # Select additional nodes efficiently
-                        additional_needed = (predicted_sizes - 1).clamp(min=0).long()
-                        
-                        for b in range(B):
-                            if valid_seeds[b] and additional_needed[b] > 0:
-                                cand_indices = candidates[b].nonzero(as_tuple=True)[0]
-                                if len(cand_indices) > 0:
-                                    n_select = min(additional_needed[b].item(), len(cand_indices))
-                                    if n_select > 0:
-                                        # Select top candidates based on features
-                                        cand_logits = seed_logits[b, cand_indices]
-                                        _, top_indices = torch.topk(cand_logits, n_select)
-                                        selected_nodes = cand_indices[top_indices]
-                                        
-                                        assignment_matrix[b, selected_nodes, cluster_idx] = 1.0
-                                        available_mask[b, selected_nodes] = False
-            
-            # Compute cluster embeddings efficiently
-            cluster_mask = assignment_matrix[:, :, cluster_idx] > 0.5
-            cluster_size = cluster_mask.sum(dim=-1, keepdim=True).float().clamp(min=1)
-            cluster_sum = (cluster_mask.unsqueeze(-1) * x).sum(dim=1)
-            cluster_embedding = cluster_sum / cluster_size
-            
-            # Apply soft masking for terminated proteins
-            active_weight = active.float().unsqueeze(-1)
-            cluster_embedding = cluster_embedding * active_weight
-            
-            cluster_embeddings.append(cluster_embedding)
-            
-            # Update context efficiently - project cluster embedding to context space
-            if active.any():
-                # Project cluster embedding to context space to match dimensions
-                cluster_context = self.context_encoder(cluster_embedding.detach())
-                global_context = global_context + 0.1 * cluster_context
-        
-        # Handle edge cases
-        if not cluster_embeddings:
-            # Fallback: single cluster with all nodes
-            cluster_embedding = (mask.unsqueeze(-1) * x).sum(dim=1) / mask.sum(dim=-1, keepdim=True).float()
-            cluster_embeddings = [cluster_embedding]
-            assignment_matrix[:, :, 0] = mask.float()
-        
-        # Stack outputs
-        cluster_features = torch.stack(cluster_embeddings, dim=1)
-        S = cluster_features.size(1)
-        
-        # Create fully connected cluster adjacency
-        cluster_adj = torch.ones(B, S, S, device=device) - torch.eye(S, device=device).unsqueeze(0)
-        
-        return cluster_features, cluster_adj, assignment_matrix
-    
-    def update_epoch(self) -> None:
-        """Update epoch counter for temperature annealing."""
-        self.epoch += 1
-
-
-class OptimizedGVPModel(nn.Module):
+class ParTokenModel(nn.Module):
     """
     Optimized GVP-GNN with efficient partitioning for protein classification.
     
     This model combines GVP layers for geometric deep learning on proteins
-    with an optimized partitioner for hierarchical clustering.
-    
+    with a partitioner for hierarchical clustering.
+
     Args:
         node_in_dim: Input node dimensions (scalar, vector)
         node_h_dim: Hidden node dimensions (scalar, vector)
@@ -406,8 +29,19 @@ class OptimizedGVPModel(nn.Module):
         num_layers: Number of GVP layers
         drop_rate: Dropout rate
         pooling: Pooling strategy ('mean', 'max', 'sum')
+
+        
         max_clusters: Maximum number of clusters
         termination_threshold: Early termination threshold
+        k_hop: Number of hops for spatial constraints in partitioner
+        cluster_size_max: Maximum cluster size in partitioner
+
+
+        codebook_size: Number of codes in VQ codebook
+        beta: Commitment loss weight for VQ codebook
+        decay: EMA decay rate for VQ codebook updates
+        distance: Distance metric for VQ codebook ('l2' or 'cos')
+        cosine_normalize: Whether to normalize embeddings in VQ codebook
     """
     
     def __init__(
@@ -422,7 +56,16 @@ class OptimizedGVPModel(nn.Module):
         drop_rate: float = 0.1, 
         pooling: str = 'mean', 
         max_clusters: int = 5,
-        termination_threshold: float = 0.95
+        termination_threshold: float = 0.95,
+        # Partitioner hyperparameters
+        k_hop: int = 2,
+        cluster_size_max: int = 3,
+        # VQCodebook hyperparameters
+        codebook_size: int = 512,
+        beta: float = 0.25,
+        decay: float = 0.99,
+        distance: str = "l2",
+        cosine_normalize: bool = False
     ):
         super().__init__()
         
@@ -457,27 +100,26 @@ class OptimizedGVPModel(nn.Module):
             LayerNorm(node_h_dim),
             GVP(node_h_dim, (ns, 0))
         )
-        
-        # Optimized partitioner
-        self.partitioner = OptimizedPartitioner(
+        # Partitioner
+        self.partitioner = Partitioner(
             nfeat=ns, 
             max_clusters=max_clusters, 
             nhid=ns // 2,
-            k_hop=2,
-            cluster_size_max=3,
+            k_hop=k_hop,
+            cluster_size_max=cluster_size_max,
             termination_threshold=termination_threshold
         )
         
         # Inter-cluster message passing
-        self.cluster_gcn = ClusterGCN(ns, ns, drop_rate)
+        self.cluster_gcn = InterClusterModel(ns, ns, drop_rate)
 
         self.codebook = VQCodebookEMA(
-            codebook_size=512,
+            codebook_size=codebook_size,
             dim=ns,
-            beta=0.25,
-            decay=0.99,
-            distance="l2",
-            cosine_normalize=False
+            beta=beta,
+            decay=decay,
+            distance=distance,
+            cosine_normalize=cosine_normalize
         )
         # Loss weights and coverage temperature (tuned later)
         self.lambda_vq = 1.0     # VQ loss weight
@@ -874,9 +516,9 @@ def create_optimized_model():
     Create an optimized model instance with recommended settings.
     
     Returns:
-        Optimized GVP model ready for training
+        ParToken model ready for training
     """
-    model = OptimizedGVPModel(
+    model = ParTokenModel(
         node_in_dim=(6, 3),         # GVP node dimensions (scalar, vector)
         node_h_dim=(100, 16),       # GVP hidden dimensions  
         edge_in_dim=(32, 1),        # GVP edge dimensions
@@ -887,7 +529,16 @@ def create_optimized_model():
         drop_rate=0.1,              # Dropout rate
         pooling='mean',             # Pooling strategy
         max_clusters=5,             # Maximum number of clusters
-        termination_threshold=0.95  # Stop when 95% of residues are assigned
+        termination_threshold=0.95, # Stop when 95% of residues are assigned
+        # Partitioner hyperparameters
+        k_hop=2,                    # k-hop neighborhood for connectivity
+        cluster_size_max=3,         # Maximum nodes per cluster
+        # VQCodebook hyperparameters
+        codebook_size=512,          # Number of codes in dictionary
+        beta=0.25,                  # Commitment loss weight
+        decay=0.99,                 # EMA decay rate
+        distance="l2",              # Distance metric
+        cosine_normalize=False      # Whether to normalize embeddings
     )
     
     print("Optimized model initialized")
@@ -898,7 +549,10 @@ def create_optimized_model():
 
 
 def demonstrate_model():
-    """Demonstrate model usage with synthetic data."""
+    """Demonstrate comprehensive model usage with synthetic data."""
+    print("🧬 ParTokenModel Demonstration")
+    print("=" * 50)
+    
     model = create_optimized_model()
     
     # Create synthetic protein data
@@ -942,39 +596,123 @@ def demonstrate_model():
     labels = torch.randint(0, 2, (batch_size,))
     batch = torch.repeat_interleave(torch.arange(batch_size), max_nodes)
     
-    print("\nRunning demonstration...")
-    print(f"Node scalar features: {h_V[0].shape}")
-    print(f"Node vector features: {h_V[1].shape}")
-    print(f"Edge index: {edge_index.shape}")
-    print(f"Edge scalar features: {h_E[0].shape}")
-    print(f"Edge vector features: {h_E[1].shape}")
+    print("\n📊 Input Data:")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Max nodes per protein: {max_nodes}")
+    print(f"  Total nodes: {total_nodes}")
+    print(f"  Node scalar features: {h_V[0].shape}")
+    print(f"  Node vector features: {h_V[1].shape}")
+    print(f"  Edge index: {edge_index.shape}")
+    print(f"  Edge scalar features: {h_E[0].shape}")
+    print(f"  Edge vector features: {h_E[1].shape}")
     
-    # Forward pass
+    # === 1. TRAINING MODE DEMONSTRATION ===
+    print("\n🔥 Training Mode Demonstration:")
+    model.train()
+    
+    # Forward pass with all outputs
+    logits, assignment_matrix, extra = model(h_V, edge_index, h_E, batch=batch)
+    
+    # Compute comprehensive loss
+    total_loss, metrics = model.compute_total_loss(logits, labels, extra)
+    
+    print(f"  Logits shape: {logits.shape}")
+    print(f"  Assignment matrix shape: {assignment_matrix.shape}")
+    print(f"  Total loss: {total_loss.item():.4f}")
+    print(f"  Classification loss: {metrics['loss/cls']:.4f}")
+    print(f"  VQ loss: {metrics['loss/vq']:.4f}")
+    print(f"  Entropy loss: {metrics['loss/ent']:.6f}")
+    print(f"  Coverage loss: {metrics['loss/psc']:.4f}")
+    print(f"  Codebook perplexity: {metrics['codebook/perplexity']:.2f}")
+    print(f"  Mean coverage: {metrics['coverage/mean']:.3f}")
+    
+    # === 2. INFERENCE MODE DEMONSTRATION ===
+    print("\n🎯 Inference Mode Demonstration:")
     model.eval()
-    with torch.no_grad():
-        logits, assignment_matrix = model(h_V, edge_index, h_E, batch=batch)
-        stats = model.get_clustering_stats(h_V, edge_index, h_E, batch=batch)
-        
-        print(f"\nOutput logits shape: {logits.shape}")
-        print(f"Assignment matrix shape: {assignment_matrix.shape}")
-        print(f"Average coverage: {stats['avg_coverage']:.3f}")
-        print(f"Average clusters per protein: {stats['avg_clusters']:.1f}")
-        print(f"Average cluster size: {stats['avg_cluster_size']:.1f}")
-        print(f"Cluster size range: {stats['min_cluster_size']:.1f} - {stats['max_cluster_size']:.1f}")
     
-    print("\n✅ Model demonstration successful!")
-    print("\nKey optimizations:")
-    print("• Streamlined partitioner (2-3x faster)")
-    print("• Efficient k-hop computation")
-    print("• Reduced memory allocation")
-    print("• Simplified context updates")
-    print("• Better gradient flow")
-    print("• Cleaner code structure")
+    with torch.no_grad():
+        # Get predictions
+        predictions = model.predict(h_V, edge_index, h_E, batch=batch)
+        probabilities = model.predict_proba(h_V, edge_index, h_E, batch=batch)
+        
+        print(f"  Predictions: {predictions}")
+        print(f"  Probabilities shape: {probabilities.shape}")
+        print(f"  Class 0 probabilities: {probabilities[:, 0].numpy()}")
+        print(f"  Class 1 probabilities: {probabilities[:, 1].numpy()}")
+    
+    # === 3. CLUSTERING STATISTICS ===
+    print("\n📈 Clustering Statistics:")
+    stats = model.get_clustering_stats(h_V, edge_index, h_E, batch=batch)
+    
+    print(f"  Average coverage: {stats['avg_coverage']:.3f}")
+    print(f"  Coverage range: {stats['min_coverage']:.3f} - {stats['max_coverage']:.3f}")
+    print(f"  Average clusters per protein: {stats['avg_clusters']:.1f}")
+    print(f"  Average cluster size: {stats['avg_cluster_size']:.1f}")
+    print(f"  Cluster size range: {stats['min_cluster_size']:.1f} - {stats['max_cluster_size']:.1f}")
+    print(f"  Total proteins processed: {stats['total_proteins']}")
+    
+    # === 4. VQ CODEBOOK FEATURES ===
+    print("\n📚 VQ Codebook Features:")
+    print(f"  Codebook size: {model.codebook.K}")
+    print(f"  Embedding dimension: {model.codebook.D}")
+    print(f"  Code indices shape: {extra['code_indices'].shape}")
+    print(f"  Unique codes used: {len(torch.unique(extra['code_indices']))}")
+    print(f"  Presence tensor shape: {extra['presence'].shape}")
+    
+    # === 5. PRE-GCN CLUSTER EXTRACTION ===
+    print("\n🔍 Pre-GCN Cluster Analysis:")
+    with torch.no_grad():
+        cluster_features, cluster_mask = model.extract_pre_gcn_clusters(
+            h_V, edge_index, h_E, batch=batch
+        )
+        
+        print(f"  Pre-GCN cluster features: {cluster_features.shape}")
+        print(f"  Valid clusters mask: {cluster_mask.shape}")
+        print(f"  Total valid clusters: {cluster_mask.sum().item()}")
+        print(f"  Valid clusters per protein: {cluster_mask.sum(dim=1).float().tolist()}")
+    
+    # === 6. MODEL TRAINING UTILITIES ===
+    print("\n🛠️  Training Utilities:")
+    
+    # Demonstrate freezing/unfreezing
+    initial_grad_status = next(model.classifier.parameters()).requires_grad
+    
+    model.freeze_backbone_for_codebook()
+    frozen_grad_status = next(model.classifier.parameters()).requires_grad
+    
+    model.unfreeze_all()
+    unfrozen_grad_status = next(model.classifier.parameters()).requires_grad
+    
+    print(f"  Initial gradient status: {initial_grad_status}")
+    print(f"  After freezing backbone: {frozen_grad_status}")
+    print(f"  After unfreezing all: {unfrozen_grad_status}")
+    
+    # Demonstrate epoch update
+    old_temp = model.partitioner.get_temperature()
+    model.update_epoch()
+    new_temp = model.partitioner.get_temperature()
+    print(f"  Temperature annealing: {old_temp:.6f} → {new_temp:.6f}")
+    
+    print("\n✅ Comprehensive demonstration completed!")
+    
+    print("\n🌟 Key ParTokenModel Features:")
+    print("• GVP-based geometric deep learning")
+    print("• Hierarchical protein partitioning") 
+    print("• Vector Quantization (VQ) codebook")
+    print("• Inter-cluster message passing")
+    print("• Multi-component loss (classification + VQ + entropy + coverage)")
+    print("• Comprehensive clustering statistics")
+    print("• Flexible training modes (frozen/joint)")
+    print("• Temperature annealing for partitioner")
+    print("• Probabilistic set cover regularization")
+    print("• Pre-GCN cluster analysis")
+    
+    return model, stats, metrics
 
 
 # Backward compatibility aliases
-GVPGradientSafeHardGumbelModel = OptimizedGVPModel
-GradientSafeVectorizedPartitioner = OptimizedPartitioner
+GVPGradientSafeHardGumbelModel = ParTokenModel
+GradientSafeVectorizedPartitioner = Partitioner
 
 
 def create_model_and_train_example():

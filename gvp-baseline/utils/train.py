@@ -5,7 +5,7 @@ import wandb
 import torch.optim as optim
 import os
 from datetime import datetime
-from utils.proteinclass_dataset import create_dataloader, get_dataset
+from utils.proteinshake_dataset import create_dataloader, get_dataset
 
 
 def train_epoch_pnc(model, dataloader, optimizer, device):

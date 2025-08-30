@@ -1,11 +1,11 @@
 import os
 import argparse
-from utils.proteinclass_dataset import create_dataloader, get_dataset
-from arxiv.efficient_pnc import GVPGradientSafeHardGumbelModel  # Changed import to efficient_pnc
-import torch
+from utils.proteinshake_dataset import create_dataloader, get_dataset
+from partoken_model import ParTokenModel 
 import torch.nn as nn
 from utils.utils import set_seed  
 from utils.train import train_pnc_model
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(

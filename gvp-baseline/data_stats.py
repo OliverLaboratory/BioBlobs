@@ -4,7 +4,7 @@ import numpy as np
 from collections import Counter
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils.proteinclass_dataset import create_dataloader, get_dataset
+from utils.proteinshake_dataset import create_dataloader, get_dataset
 
 def analyze_dataset_statistics(dataset_name="enzymecommission", split="structure", split_similarity_threshold=0.7, data_dir="./data"):
     """

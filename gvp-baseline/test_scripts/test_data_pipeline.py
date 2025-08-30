@@ -5,7 +5,7 @@ Test script to verify the N, CA, C optimization works correctly.
 
 import torch
 import numpy as np
-from utils.proteinclass_dataset import ProteinClassificationDataset, BACKBONE
+from utils.proteinshake_dataset import ProteinClassificationDataset, BACKBONE
 
 def test_backbone_optimization():
     """Test that the optimization to use only N, CA, C atoms works correctly."""
