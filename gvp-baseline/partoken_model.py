@@ -29,43 +29,43 @@ class ParTokenModel(nn.Module):
         num_layers: Number of GVP layers
         drop_rate: Dropout rate
         pooling: Pooling strategy ('mean', 'max', 'sum')
-
-        
         max_clusters: Maximum number of clusters
         termination_threshold: Early termination threshold
-        k_hop: Number of hops for spatial constraints in partitioner
-        cluster_size_max: Maximum cluster size in partitioner
-
-
-        codebook_size: Number of codes in VQ codebook
-        beta: Commitment loss weight for VQ codebook
-        decay: EMA decay rate for VQ codebook updates
-        distance: Distance metric for VQ codebook ('l2' or 'cos')
-        cosine_normalize: Whether to normalize embeddings in VQ codebook
     """
     
     def __init__(
-        self, 
-        node_in_dim: Tuple[int, int], 
+        self,
+        node_in_dim: Tuple[int, int],
         node_h_dim: Tuple[int, int],
-        edge_in_dim: Tuple[int, int], 
+        edge_in_dim: Tuple[int, int],
         edge_h_dim: Tuple[int, int],
-        num_classes: int = 2, 
-        seq_in: bool = False, 
+        num_classes: int = 2,
+        seq_in: bool = False,
         num_layers: int = 3,
-        drop_rate: float = 0.1, 
-        pooling: str = 'mean', 
-        max_clusters: int = 5,
-        termination_threshold: float = 0.95,
+        drop_rate: float = 0.1,
+        pooling: str = 'mean',
         # Partitioner hyperparameters
+        max_clusters: int = 5,
+        nhid: int = 50,
         k_hop: int = 2,
         cluster_size_max: int = 3,
-        # VQCodebook hyperparameters
+        termination_threshold: float = 0.95,
+        tau_init: float = 1.0,
+        tau_min: float = 0.1,
+        tau_decay: float = 0.95,
+        # Codebook hyperparameters
         codebook_size: int = 512,
-        beta: float = 0.25,
-        decay: float = 0.99,
-        distance: str = "l2",
-        cosine_normalize: bool = False
+        codebook_dim: Optional[int] = None,
+        codebook_beta: float = 0.25,
+        codebook_decay: float = 0.99,
+        codebook_eps: float = 1e-5,
+        codebook_distance: str = "l2",
+        codebook_cosine_normalize: bool = False,
+        # Loss weights
+        lambda_vq: float = 1.0,
+        lambda_ent: float = 1e-3,
+        lambda_psc: float = 1e-2,
+        psc_temp: float = 0.3
     ):
         super().__init__()
         
@@ -102,30 +102,34 @@ class ParTokenModel(nn.Module):
         )
         # Partitioner
         self.partitioner = Partitioner(
-            nfeat=ns, 
-            max_clusters=max_clusters, 
-            nhid=ns // 2,
+            nfeat=ns,
+            max_clusters=max_clusters,
+            nhid=nhid,
             k_hop=k_hop,
             cluster_size_max=cluster_size_max,
             termination_threshold=termination_threshold
         )
+        self.partitioner.tau_init = tau_init
+        self.partitioner.tau_min = tau_min
+        self.partitioner.tau_decay = tau_decay
         
         # Inter-cluster message passing
         self.cluster_gcn = InterClusterModel(ns, ns, drop_rate)
 
         self.codebook = VQCodebookEMA(
             codebook_size=codebook_size,
-            dim=ns,
-            beta=beta,
-            decay=decay,
-            distance=distance,
-            cosine_normalize=cosine_normalize
+            dim=codebook_dim if codebook_dim is not None else ns,
+            beta=codebook_beta,
+            decay=codebook_decay,
+            eps=codebook_eps,
+            distance=codebook_distance,
+            cosine_normalize=codebook_cosine_normalize
         )
-        # Loss weights and coverage temperature (tuned later)
-        self.lambda_vq = 1.0     # VQ loss weight
-        self.lambda_ent = 1e-3   # usage entropy (KL to uniform) weight
-        self.lambda_psc = 1e-2   # probabilistic set cover (coverage) weight
-        self.psc_temp   = 0.3    # temperature for soft presence
+        # Loss weights and coverage temperature
+        self.lambda_vq = lambda_vq
+        self.lambda_ent = lambda_ent
+        self.lambda_psc = lambda_psc
+        self.psc_temp = psc_temp
         
         # Classification head
         self.classifier = nn.Sequential(
@@ -529,16 +533,7 @@ def create_optimized_model():
         drop_rate=0.1,              # Dropout rate
         pooling='mean',             # Pooling strategy
         max_clusters=5,             # Maximum number of clusters
-        termination_threshold=0.95, # Stop when 95% of residues are assigned
-        # Partitioner hyperparameters
-        k_hop=2,                    # k-hop neighborhood for connectivity
-        cluster_size_max=3,         # Maximum nodes per cluster
-        # VQCodebook hyperparameters
-        codebook_size=512,          # Number of codes in dictionary
-        beta=0.25,                  # Commitment loss weight
-        decay=0.99,                 # EMA decay rate
-        distance="l2",              # Distance metric
-        cosine_normalize=False      # Whether to normalize embeddings
+        termination_threshold=0.95  # Stop when 95% of residues are assigned
     )
     
     print("Optimized model initialized")

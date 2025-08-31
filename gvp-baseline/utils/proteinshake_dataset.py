@@ -446,150 +446,173 @@ def get_dataset(
     Returns:
         tuple: (train_dataset, val_dataset, test_dataset, num_classes)
     """
-    # Load the appropriate task
-    if dataset_name == "enzymecommission":
-        from proteinshake.tasks import EnzymeClassTask
-
-        task = EnzymeClassTask(
-            split=split, split_similarity_threshold=split_similarity_threshold
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    elif dataset_name == "proteinfamily":
-        from proteinshake.tasks import ProteinFamilyTask
-
-        task = ProteinFamilyTask(
-            split=split, split_similarity_threshold=split_similarity_threshold
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    elif dataset_name == "scope":
-        from proteinshake.tasks import StructuralClassTask
-
-        task = StructuralClassTask(
-            split=split, split_similarity_threshold=split_similarity_threshold
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    elif dataset_name == "geneontology":
-        from proteinshake.tasks import GeneOntologyTask
-
-        task = GeneOntologyTask(
-            split=split, split_similarity_threshold=split_similarity_threshold
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-
-    print(f"✅ Number of proteins: {task.size} in: {dataset_name} before splitting")
-
-    # Debug the task split information
-    print(f"\n" + "=" * 50)
-    print("TASK SPLIT INFO")
-    print("=" * 50)
-    print(f"Task dataset size: {task.size}")
-    print(f"Task num_classes: {task.num_classes}")
-    print(f"Split index lengths - Train: {len(train_index)}, Val: {len(val_index)}, Test: {len(test_index)}")
-    print(f"⚠️ Total indices in splits: {len(train_index) + len(val_index) + len(test_index)}")
-
+    
+    print(f"Using data directory: {data_dir}")
     os.makedirs(data_dir, exist_ok=True)
 
-    # Convert generator to list for indexing
-    protein_list = list(dataset.proteins(resolution="atom"))
-
-    # Analyze split indices coverage
-    all_indices = set(range(len(protein_list)))
-    train_indices_set = set(train_index)
-    val_indices_set = set(val_index)
-    test_indices_set = set(test_index)
-    used_indices = train_indices_set | val_indices_set | test_indices_set
-    missing_indices = all_indices - used_indices
-    
-    print(f"\n" + "=" * 50)
-    print("⚠️ SPLIT INDICES CHECK")
-    print("=" * 50)
-    print(f"Total protein indices available: {len(all_indices)}")
-    print(f"Train indices: {len(train_indices_set)}")
-    print(f"Val indices: {len(val_indices_set)}")
-    print(f"Test indices: {len(test_indices_set)}")
-    print(f"Total indices used in splits: {len(used_indices)}")
-    print(f"⚠️ Missing indices (not in any split): {len(missing_indices)}")
-    
-    if missing_indices:
-        # print(f"First 10 missing indices: {sorted(list(missing_indices))[:10]}")
-        # Show some protein IDs that are missing
-        missing_proteins = []
-        for idx in sorted(list(missing_indices))[:5]:
-            try:
-                protein_data = protein_list[idx]
-                protein_id = protein_data["protein"]["ID"]
-                missing_proteins.append(protein_id)
-            except:
-                missing_proteins.append(f"idx_{idx}")
-        print(f"Sample missing protein IDs: {missing_proteins}")
-
-    # Check for overlaps between splits
-    train_val_overlap = train_indices_set & val_indices_set
-    train_test_overlap = train_indices_set & test_indices_set
-    val_test_overlap = val_indices_set & test_indices_set
-    
-    if train_val_overlap or train_test_overlap or val_test_overlap:
-        print(f"WARNING: Split overlaps detected!")
-        print(f"Train-Val overlap: {len(train_val_overlap)}")
-        print(f"Train-Test overlap: {len(train_test_overlap)}")
-        print(f"Val-Test overlap: {len(val_test_overlap)}")
-
-    # Split the protein list using indices
-    train_proteins = [protein_list[i] for i in train_index]
-    val_proteins = [protein_list[i] for i in val_index]
-    test_proteins = [protein_list[i] for i in test_index]
-    
-    print(f"Split sizes - Train: {len(train_proteins)}, Val: {len(val_proteins)}, Test: {len(test_proteins)}")
-    print(f"Total split size: {len(train_proteins) + len(val_proteins) + len(test_proteins)}")
-
-    # Check if JSON files exist, load if available, else generate and save
+    # Check if JSON files exist first (before initializing proteinshake)
     train_json = os.path.join(data_dir, f"{dataset_name}_train.json")
     val_json = os.path.join(data_dir, f"{dataset_name}_val.json")
     test_json = os.path.join(data_dir, f"{dataset_name}_test.json")
 
+    print(f"Checking for cached data files:")
+    print(f"  Train: {train_json} -> exists: {os.path.exists(train_json)}")
+    print(f"  Val: {val_json} -> exists: {os.path.exists(val_json)}")
+    print(f"  Test: {test_json} -> exists: {os.path.exists(test_json)}")
+
     if os.path.exists(train_json) and os.path.exists(val_json) and os.path.exists(test_json):
-        print("Loading train/val/test structures from existing JSON files.")
+        print("✅ Loading train/val/test structures from existing JSON files (no proteinshake download needed).")
         with open(train_json, "r") as f:
             train_structures = json.load(f)
         with open(val_json, "r") as f:
             val_structures = json.load(f)
         with open(test_json, "r") as f:
             test_structures = json.load(f)
+        
+        # Infer num_classes from the data
+        all_labels = []
+        for structures in [train_structures, val_structures, test_structures]:
+            for structure in structures:
+                if "label" in structure:
+                    all_labels.append(structure["label"])
+        
+        num_classes = max(all_labels) + 1 if all_labels else 2
+        print(f"📊 Loaded cached data: Train={len(train_structures)}, Val={len(val_structures)}, Test={len(test_structures)}")
+        print(f"📊 Inferred num_classes: {num_classes}")
+        
     else:
+        print("❌ JSON files not found. Initializing proteinshake and generating new data...")
+        
+        # Only initialize proteinshake when we need to generate new data
+        if dataset_name == "enzymecommission":
+            from proteinshake.tasks import EnzymeClassTask
+
+            task = EnzymeClassTask(
+                split=split, split_similarity_threshold=split_similarity_threshold
+            )
+            dataset = task.dataset
+            num_classes = task.num_classes
+            train_index, val_index, test_index = (
+                task.train_index,
+                task.val_index,
+                task.test_index,
+            )
+
+        elif dataset_name == "proteinfamily":
+            from proteinshake.tasks import ProteinFamilyTask
+
+            task = ProteinFamilyTask(
+                split=split, split_similarity_threshold=split_similarity_threshold
+            )
+            dataset = task.dataset
+            num_classes = task.num_classes
+            train_index, val_index, test_index = (
+                task.train_index,
+                task.val_index,
+                task.test_index,
+            )
+
+        elif dataset_name == "scope":
+            from proteinshake.tasks import StructuralClassTask
+
+            task = StructuralClassTask(
+                split=split, split_similarity_threshold=split_similarity_threshold
+            )
+            dataset = task.dataset
+            num_classes = task.num_classes
+            train_index, val_index, test_index = (
+                task.train_index,
+                task.val_index,
+                task.test_index,
+            )
+
+        elif dataset_name == "geneontology":
+            from proteinshake.tasks import GeneOntologyTask
+
+            task = GeneOntologyTask(
+                split=split, split_similarity_threshold=split_similarity_threshold
+            )
+            dataset = task.dataset
+            num_classes = task.num_classes
+            train_index, val_index, test_index = (
+                task.train_index,
+                task.val_index,
+                task.test_index,
+            )
+
+        else:
+            raise ValueError(f"Unknown dataset: {dataset_name}")
+
+        print(f"✅ Number of proteins: {task.size} in: {dataset_name} before splitting")
+
+        # Debug the task split information
+        print(f"\n" + "=" * 50)
+        print("TASK SPLIT INFO")
+        print("=" * 50)
+        print(f"Task dataset size: {task.size}")
+        print(f"Task num_classes: {task.num_classes}")
+        print(f"Split index lengths - Train: {len(train_index)}, Val: {len(val_index)}, Test: {len(test_index)}")
+        print(f"⚠️ Total indices in splits: {len(train_index) + len(val_index) + len(test_index)}")
+
         print("Generating train/val/test structures and saving to JSON files.")
+        
+        # Convert generator to list for indexing (this is the expensive operation)
+        print("Loading protein structures from dataset...")
+        protein_list = list(dataset.proteins(resolution="atom"))
+
+        # Analyze split indices coverage
+        all_indices = set(range(len(protein_list)))
+        train_indices_set = set(train_index)
+        val_indices_set = set(val_index)
+        test_indices_set = set(test_index)
+        used_indices = train_indices_set | val_indices_set | test_indices_set
+        missing_indices = all_indices - used_indices
+        
+        print(f"\n" + "=" * 50)
+        print("⚠️ SPLIT INDICES CHECK")
+        print("=" * 50)
+        print(f"Total protein indices available: {len(all_indices)}")
+        print(f"Train indices: {len(train_indices_set)}")
+        print(f"Val indices: {len(val_indices_set)}")
+        print(f"Test indices: {len(test_indices_set)}")
+        print(f"Total indices used in splits: {len(used_indices)}")
+        print(f"⚠️ Missing indices (not in any split): {len(missing_indices)}")
+        
+        if missing_indices:
+            # Show some protein IDs that are missing
+            missing_proteins = []
+            for idx in sorted(list(missing_indices))[:5]:
+                try:
+                    protein_data = protein_list[idx]
+                    protein_id = protein_data["protein"]["ID"]
+                    missing_proteins.append(protein_id)
+                except:
+                    missing_proteins.append(f"idx_{idx}")
+            print(f"Sample missing protein IDs: {missing_proteins}")
+
+        # Check for overlaps between splits
+        train_val_overlap = train_indices_set & val_indices_set
+        train_test_overlap = train_indices_set & test_indices_set
+        val_test_overlap = val_indices_set & test_indices_set
+        
+        if train_val_overlap or train_test_overlap or val_test_overlap:
+            print(f"WARNING: Split overlaps detected!")
+            print(f"Train-Val overlap: {len(train_val_overlap)}")
+            print(f"Train-Test overlap: {len(train_test_overlap)}")
+            print(f"Val-Test overlap: {len(val_test_overlap)}")
+
+        # Split the protein list using indices
+        train_proteins = [protein_list[i] for i in train_index]
+        val_proteins = [protein_list[i] for i in val_index]
+        test_proteins = [protein_list[i] for i in test_index]
+        
+        print(f"Split sizes - Train: {len(train_proteins)}, Val: {len(val_proteins)}, Test: {len(test_proteins)}")
+        print(f"Total split size: {len(train_proteins) + len(val_proteins) + len(test_proteins)}")
+
         train_structures = generator_to_structures(train_proteins, dataset_name=dataset_name)
         val_structures = generator_to_structures(val_proteins, dataset_name=dataset_name)
         test_structures = generator_to_structures(test_proteins, dataset_name=dataset_name)
+        
         with open(train_json, "w") as f:
             json.dump(train_structures, f, indent=2)
         with open(val_json, "w") as f:
