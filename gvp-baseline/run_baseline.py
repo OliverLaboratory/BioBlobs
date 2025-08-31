@@ -51,9 +51,21 @@ class GVPBaseline(pl.LightningModule):
         loss = self.criterion(logits, batch.y)
         preds = torch.argmax(logits, dim=1)
         acc = (preds == batch.y).float().mean()
-        self.log('train_loss', loss, on_step=True, on_epoch=True)
-        self.log('train_acc', acc, on_step=True, on_epoch=True)
+        batch_size = batch.y.size(0)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_acc', acc, on_step=True, on_epoch=True, batch_size=batch_size)
         return loss
+
+    def on_train_epoch_end(self):
+        train_loss = self.trainer.callback_metrics.get('train_loss_epoch', 0.0)
+        train_acc = self.trainer.callback_metrics.get('train_acc_epoch', 0.0)
+        self.print(f"Epoch {self.current_epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
+
+    def on_validation_epoch_end(self):
+        val_loss = self.trainer.callback_metrics.get('val_loss', 0.0)
+        val_acc = self.trainer.callback_metrics.get('val_acc', 0.0)
+        self.print(f"         | Val Loss:   {val_loss:.4f} | Val Acc:   {val_acc:.4f}")
+        self.print("-" * 55)
 
     def validation_step(self, batch, batch_idx):
         h_V = (batch.node_s, batch.node_v)
@@ -63,8 +75,9 @@ class GVPBaseline(pl.LightningModule):
         loss = self.criterion(logits, batch.y)
         preds = torch.argmax(logits, dim=1)
         acc = (preds == batch.y).float().mean()
-        self.log('val_loss', loss, on_step=False, on_epoch=True)
-        self.log('val_acc', acc, on_step=False, on_epoch=True)
+        batch_size = batch.y.size(0)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_acc', acc, on_step=False, on_epoch=True, batch_size=batch_size)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -75,18 +88,35 @@ class GVPBaseline(pl.LightningModule):
         loss = self.criterion(logits, batch.y)
         preds = torch.argmax(logits, dim=1)
         acc = (preds == batch.y).float().mean()
-        self.log('test_loss', loss, on_step=False, on_epoch=True)
-        self.log('test_acc', acc, on_step=False, on_epoch=True)
+        batch_size = batch.y.size(0)
+        self.log('test_loss', loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_acc', acc, on_step=False, on_epoch=True, batch_size=batch_size)
         return loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         return optimizer
 
-@hydra.main(version_base=None, config_path='conf', config_name='config')
+@hydra.main(version_base="1.1", config_path='conf', config_name='config')
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     set_seed(cfg.train.seed)
+
+    # Create custom output directory structure
+    from hydra.core.hydra_config import HydraConfig
+    hydra_cfg = HydraConfig.get()
+    timestamp = hydra_cfg.job.name  # This gives us the timestamp
+    
+    # Custom output directory: ./outputs/wandb_project/dataset_name/timestamp
+    custom_output_dir = os.path.join(
+        "./outputs",
+        cfg.train.wandb_project,
+        cfg.data.dataset_name,
+        timestamp
+    )
+    os.makedirs(custom_output_dir, exist_ok=True)
+    
+    print(f"Output directory: {custom_output_dir}")
 
     # Get datasets
     train_dataset, val_dataset, test_dataset, num_classes = get_dataset(
@@ -113,16 +143,26 @@ def main(cfg: DictConfig):
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1 if torch.cuda.is_available() else None,
         log_every_n_steps=10,
-        default_root_dir=cfg.train.models_dir
+        default_root_dir=custom_output_dir
     )
 
+    # Print training header
+    print("\n" + "=" * 55)
+    print("TRAINING STARTED")
+    print("=" * 55)
+
     trainer.fit(model, train_loader, val_loader)
+    
+    print("\n" + "=" * 55)
+    print("TESTING")
+    print("=" * 55)
+    
     trainer.test(model, test_loader)
 
     # Save best model and summary manually (original functionality)
     if wandb_logger is not None:
         # Save model checkpoint
-        best_model_path = os.path.join(cfg.train.models_dir, 'best_model.pt')
+        best_model_path = os.path.join(custom_output_dir, 'best_model.pt')
         trainer.save_checkpoint(best_model_path)
         wandb_logger.experiment.save(best_model_path)
         # Log summary

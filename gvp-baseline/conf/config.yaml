@@ -15,7 +15,7 @@ model:
   seq_in: false
 
 train:
-  epochs: 1
+  epochs: 100
   lr: 1e-3
   batch_size: 128
   num_workers: 4
