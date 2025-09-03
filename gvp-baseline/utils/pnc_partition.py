@@ -258,11 +258,14 @@ class Partitioner(nn.Module):
                         # Select additional nodes efficiently
                         additional_needed = (predicted_sizes - 1).clamp(min=0).long()
                         
-                        for b in range(B):
-                            if valid_seeds[b] and additional_needed[b] > 0:
+                        # Map valid_seeds indices to additional_needed indices
+                        valid_indices = valid_seeds.nonzero(as_tuple=True)[0]
+                        
+                        for i, b in enumerate(valid_indices):
+                            if additional_needed[i] > 0:
                                 cand_indices = candidates[b].nonzero(as_tuple=True)[0]
                                 if len(cand_indices) > 0:
-                                    n_select = min(additional_needed[b].item(), len(cand_indices))
+                                    n_select = min(additional_needed[i].item(), len(cand_indices))
                                     if n_select > 0:
                                         # Select top candidates based on features
                                         cand_logits = seed_logits[b, cand_indices]

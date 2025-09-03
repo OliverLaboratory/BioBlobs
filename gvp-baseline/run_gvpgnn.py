@@ -1,8 +1,4 @@
 import os
-# Set environment variables to suppress TensorFlow warnings
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-# Additional CUDA warnings suppression
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Only if you want to use specific GPU
 
 import hydra
@@ -18,9 +14,11 @@ from utils.utils import set_seed
 import torch
 import torch.nn as nn
 import wandb
+from datetime import datetime
+from pytorch_lightning.callbacks import ModelCheckpoint
 
-# Set torch matmul precision to suppress warnings
-torch.set_float32_matmul_precision('medium')
+# # Set torch matmul precision to suppress warnings
+# torch.set_float32_matmul_precision('highest')
 
 class GVPBaseline(pl.LightningModule):
     def __init__(self, model_cfg, train_cfg, num_classes):
@@ -102,11 +100,8 @@ def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     set_seed(cfg.train.seed)
 
-    # Create custom output directory structure
-    from hydra.core.hydra_config import HydraConfig
-    hydra_cfg = HydraConfig.get()
-    timestamp = hydra_cfg.job.name  # This gives us the timestamp
-    
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+
     # Custom output directory: ./outputs/wandb_project/dataset_name/timestamp
     custom_output_dir = os.path.join(
         "./outputs",
@@ -136,6 +131,16 @@ def main(cfg: DictConfig):
     # Logger
     wandb_logger = WandbLogger(project=cfg.train.wandb_project) if cfg.train.use_wandb else None
 
+    # Checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_acc',
+        mode='max',
+        save_top_k=1,
+        dirpath=custom_output_dir,
+        filename='best-{epoch:02d}-{val_acc:.3f}',
+        save_last=True
+    )
+
     # Trainer
     trainer = pl.Trainer(
         max_epochs=cfg.train.epochs,
@@ -143,7 +148,8 @@ def main(cfg: DictConfig):
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1 if torch.cuda.is_available() else None,
         log_every_n_steps=10,
-        default_root_dir=custom_output_dir
+        default_root_dir=custom_output_dir,
+        callbacks=[checkpoint_callback]
     )
 
     # Print training header

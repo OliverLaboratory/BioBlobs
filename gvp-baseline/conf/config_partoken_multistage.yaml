@@ -1,0 +1,106 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+data:
+  dataset_name: enzymecommission
+  split: structure
+  split_similarity_threshold: 0.7
+  data_dir: /sb/oliver_lab/data/wangx86/partoken-protein/gvp-baseline/data
+
+model:
+  node_in_dim: [6, 3]
+  node_h_dim: [100, 16]
+  edge_in_dim: [32, 1]
+  edge_h_dim: [32, 1]
+  num_layers: 3
+  drop_rate: 0.1
+  pooling: sum
+  seq_in: false
+  # Partitioner hyperparameters
+  max_clusters: 10
+  nhid: 50
+  k_hop: 1
+  cluster_size_max: 15
+  termination_threshold: 0.95
+  tau_init: 1.0
+  tau_min: 0.1
+  tau_decay: 0.95
+  # Codebook hyperparameters
+  codebook_size: 512
+  codebook_dim: null
+  codebook_beta: 0.25
+  codebook_decay: 0.99
+  codebook_eps: 1e-5
+  codebook_distance: l2
+  codebook_cosine_normalize: false
+  # Loss weights (will be overridden by stage-specific weights)
+  lambda_vq: 1.0
+  lambda_ent: 1e-3
+  lambda_psc: 1e-2
+  psc_temp: 0.3
+
+train:
+  batch_size: 128
+  num_workers: 8
+  seed: 42
+  models_dir: ./saved_models
+  use_wandb: false
+  wandb_project: partoken-multistage
+  # Cosine learning rate schedule with warmup
+  use_cosine_schedule: true
+  warmup_epochs: 5
+
+# Multi-stage training configuration
+multistage:
+  enabled: true
+  
+  # Stage 0: Baseline (encoder + partitioner only)
+  stage0:
+    name: "baseline"
+    epochs: 20
+    lr: 1e-4
+    bypass_codebook: true
+    save_teacher: true
+    loss_weights:
+      lambda_vq: 0.0      # No VQ loss in stage 0
+      lambda_ent: 0.0     # No entropy loss in stage 0
+      lambda_psc: 0.0     # No PSC loss in stage 0
+    
+  # Stage 1: Tokenizer warm-start (frozen backbone, 1-3 epochs)
+  stage1:
+    name: "codebook_warmup"
+    epochs: 3
+    lr: 1e-3
+    freeze_backbone: true
+    kmeans_init: true
+    kmeans_batches: 50
+    loss_weights:
+      lambda_vq: 1.0      # Strong VQ loss
+      lambda_ent: 1e-3    # Small entropy regularization
+      lambda_psc: 1e-4    # Very weak PSC coverage loss
+      
+  # Stage 2: Joint fine-tuning (full model)
+  stage2:
+    name: "joint_finetuning"
+    epochs: 15
+    lr: 5e-5
+    knowledge_distillation:
+      enabled: true
+      temperature: 3.0
+      alpha: 0.1          # Weight for KD loss
+    loss_ramp:
+      enabled: true
+      ramp_epochs: 5      # Gradually increase VQ weights over 5 epochs
+      initial_weights:
+        lambda_vq: 0.1
+        lambda_ent: 1e-4
+        lambda_psc: 1e-4
+      final_weights:
+        lambda_vq: 1.0
+        lambda_ent: 1e-3
+        lambda_psc: 1e-2
+    freeze_codebook_final:
+      enabled: true
+      epochs: 3           # Freeze codebook for last 3 epochs

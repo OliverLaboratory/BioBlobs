@@ -18,13 +18,17 @@ model:
   drop_rate: 0.1
   pooling: sum
   seq_in: false
+  # DiffPool specific parameters
+  max_clusters: 30
+  entropy_weight: 0.1
+  link_pred_weight: 0.5
 
 train:
-  epochs: 100
-  lr: 1e-3
-  batch_size: 128
+  epochs: 50
+  lr: 1e-4
+  batch_size: 64
   num_workers: 4
   seed: 42
   models_dir: ./saved_models
   use_wandb: true
-  wandb_project: gvp-gnn-baseline
+  wandb_project: gvp-diffpool-baseline

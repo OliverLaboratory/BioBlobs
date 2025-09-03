@@ -1,395 +1,225 @@
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Only if you want to use specific GPU
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
 from tqdm import tqdm
 import json
-import os
 import argparse
-from utils.proteinshake_dataset import ProteinClassificationDataset, print_example_data, create_dataloader, \
-get_dataset, generator_to_structures
+from utils.proteinshake_dataset import get_dataset, create_dataloader
 from diffpool_part import GVPDiffPoolGraphSAGEModel  # Import the new model
+from utils.utils import set_seed
 import torch
-import random
-import torch.optim as optim
-import numpy as np
 import torch.nn as nn
 import wandb
 from datetime import datetime
+from pytorch_lightning.callbacks import ModelCheckpoint
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--dataset_name",
-    type=str,
-    default="enzymecommission",
-    choices=["enzymecommission", "proteinfamily", "scope"],
-)
+# Set torch matmul precision to suppress warnings
+torch.set_float32_matmul_precision('medium')
 
-parser.add_argument(
-    "--split",
-    type=str,
-    default="structure",
-    choices=["random", "sequence", "structure"],
-)
-
-parser.add_argument(
-    "--split_similarity_threshold",
-    type=float,
-    default=0.7,
-)
-
-parser.add_argument(
-    "--seed", type=int, default=42, help="Random seed for reproducibility"
-)
-
-parser.add_argument(
-    "--max_clusters", type=int, default=30, help="Maximum number of clusters for DiffPool"
-)
-
-parser.add_argument(
-    "--entropy_weight", type=float, default=0.1, help="Weight for entropy loss"
-)
-
-parser.add_argument(
-    "--link_pred_weight", type=float, default=0.5, help="Weight for link prediction loss"
-)
-
-args = parser.parse_args()
-dataset_name = args.dataset_name
-split = args.split
-split_similarity_threshold = args.split_similarity_threshold
-seed = args.seed
-max_clusters = args.max_clusters
-entropy_weight = args.entropy_weight
-link_pred_weight = args.link_pred_weight
-
-
-def set_seed(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    print(f"Random seed set to {seed}")
-
-
-def train_diffpool_model(model, train_dataset, val_dataset, test_dataset, 
-                        epochs=150, lr=1e-3, batch_size=128, num_workers=4,
-                        models_dir="./models", device="cuda", use_wandb=True):
-    
-    # Create timestamp-based model ID and subfolder
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_id = f"diffpool_{dataset_name}_{split}_{split_similarity_threshold}_{timestamp}"
-    run_models_dir = os.path.join(models_dir, model_id)
-    
-    # Initialize wandb
-    if use_wandb:
-        run_name = f"diffpool_graphsage_intercluster_{dataset_name}_{split}_{split_similarity_threshold}"
-        wandb.init(
-            project="gvp-protein-classification",
-            name=run_name,
-            config={
-                "dataset": dataset_name,
-                "split": split,
-                "epochs": epochs,
-                "lr": lr,
-                "model_id": model_id,
-                "timestamp": timestamp,
-                "max_clusters": max_clusters,
-                "entropy_weight": entropy_weight,
-                "link_pred_weight": link_pred_weight,
-                "model_type": "GVPDiffPool"
-            }
+class GVPDiffPool(pl.LightningModule):
+    def __init__(self, model_cfg, train_cfg, num_classes):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = GVPDiffPoolGraphSAGEModel(
+            node_in_dim=model_cfg.node_in_dim,
+            node_h_dim=model_cfg.node_h_dim,
+            edge_in_dim=model_cfg.edge_in_dim,
+            edge_h_dim=model_cfg.edge_h_dim,
+            num_classes=num_classes,
+            seq_in=model_cfg.seq_in,
+            num_layers=model_cfg.num_layers,
+            drop_rate=model_cfg.drop_rate,
+            pooling=model_cfg.pooling,
+            max_clusters=model_cfg.max_clusters,
+            entropy_weight=model_cfg.entropy_weight,
+            link_pred_weight=model_cfg.link_pred_weight
         )
-    
-    train_loader = create_dataloader(train_dataset, batch_size, num_workers, shuffle=True)
-    val_loader = create_dataloader(val_dataset, batch_size, num_workers, shuffle=False)
-    test_loader = create_dataloader(test_dataset, batch_size, num_workers, shuffle=False)
-    
-    model = model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+        self.lr = train_cfg.lr
+        self.criterion = nn.CrossEntropyLoss()
 
-    # Track top 3 models: [(val_acc, model_path, epoch), ...]
-    top_models = []
-    os.makedirs(run_models_dir, exist_ok=True)
-    
-    print(f"Starting training for {epochs} epochs...")
-    print(f"Model ID: {model_id}")
-    print(f"Models will be saved to: {run_models_dir}")
-    print(f"DiffPool parameters: max_clusters={max_clusters}, entropy_weight={entropy_weight}, link_pred_weight={link_pred_weight}")
+    def forward(self, h_V, edge_index, h_E, seq=None, batch=None):
+        return self.model(h_V, edge_index, h_E, seq, batch)
 
-    for epoch in range(epochs):
-        # Training
-        model.train()
-        train_loss, train_acc, train_aux_losses = train_epoch_diffpool(model, train_loader, optimizer, device)
-        
-        print(f"EPOCH {epoch} TRAIN loss: {train_loss:.4f} acc: {train_acc:.4f}")
-        print(f"  Aux losses - entropy: {train_aux_losses['entropy']:.4f}, link_pred: {train_aux_losses['link_pred']:.4f}")
-        
-        # Validation
-        model.eval()
-        with torch.no_grad():
-            val_loss, val_acc, val_aux_losses = evaluate_model_diffpool(model, val_loader, device)
-        
-        print(f"EPOCH {epoch} VAL loss: {val_loss:.4f} acc: {val_acc:.4f}")
-        print(f"  Aux losses - entropy: {val_aux_losses['entropy']:.4f}, link_pred: {val_aux_losses['link_pred']:.4f}")
-        
-        # Check if this model should be saved (top 3)
-        should_save = len(top_models) < 3 or val_acc > min(top_models, key=lambda x: x[0])[0]
-        
-        if should_save:
-            # Save model in the run-specific subfolder
-            model_path = os.path.join(run_models_dir, f"epoch_{epoch}.pt")
-            torch.save(model.state_dict(), model_path)
-            
-            # Add to top models list
-            top_models.append((val_acc, model_path, epoch))
-            
-            # Sort by validation accuracy (descending)
-            top_models.sort(key=lambda x: x[0], reverse=True)
-            
-            # Keep only top 3
-            if len(top_models) > 3:
-                # Remove the worst model file and entry
-                worst_acc, worst_path, worst_epoch = top_models.pop()
-                if os.path.exists(worst_path):
-                    os.remove(worst_path)
-                    print(f"Removed model from epoch {worst_epoch} (val_acc: {worst_acc:.4f})")
-        
-        # Log to wandb
-        if use_wandb:
-            wandb.log({
-                "train_loss": train_loss,
-                "train_acc": train_acc,
-                "train_entropy_loss": train_aux_losses['entropy'],
-                "train_link_pred_loss": train_aux_losses['link_pred'],
-                "val_loss": val_loss,
-                "val_acc": val_acc,
-                "val_entropy_loss": val_aux_losses['entropy'],
-                "val_link_pred_loss": val_aux_losses['link_pred'],
-                "epoch": epoch
-            })
-        
-        # Display current top models
-        best_val_acc = top_models[0][0] if top_models else 0.0
-        print(f"BEST VAL acc: {best_val_acc:.4f}")
-        print("Top 3 models:")
-        for i, (acc, path, ep) in enumerate(top_models):
-            print(f"  {i+1}. Epoch {ep}: {acc:.4f} - {os.path.basename(path)}")
-        print("-" * 60)
-    
-    # Test with best model
-    if top_models:
-        best_val_acc, best_model_path, best_epoch = top_models[0]
-        print(f"Loading best model from epoch {best_epoch}: {best_model_path}")
-        model.load_state_dict(torch.load(best_model_path))
-        
-        # Save a copy of the best model with a clear name
-        best_model_final_path = os.path.join(run_models_dir, "best_model.pt")
-        torch.save(model.state_dict(), best_model_final_path)
-        print(f"Best model also saved as: {best_model_final_path}")
-    else:
-        print("No models were saved!")
-        return model
-    
-    model.eval()
-    with torch.no_grad():
-        test_loss, test_acc, test_aux_losses = evaluate_model_diffpool(model, test_loader, device)
-        
-    print(f"TEST loss: {test_loss:.4f} acc: {test_acc:.4f}")
-    print(f"Test aux losses - entropy: {test_aux_losses['entropy']:.4f}, link_pred: {test_aux_losses['link_pred']:.4f}")
-    print(f"Best validation accuracy: {best_val_acc:.4f} (epoch {best_epoch})")
-    
-    
-    # Log final results
-    if use_wandb:
-        wandb.log({
-            "test_loss": test_loss,
-            "test_acc": test_acc,
-            "test_entropy_loss": test_aux_losses['entropy'],
-            "test_link_pred_loss": test_aux_losses['link_pred'],
-            "best_val_acc": best_val_acc,
-            "best_epoch": best_epoch
-        })
-        # Log the model path for reference
-        wandb.config.update({"model_save_path": run_models_dir})
-        wandb.finish()
-    
-    return model
-
-
-def evaluate_model_diffpool(model, dataloader, device):
-    """
-    Evaluate DiffPool model on given dataloader.
-    """
-    total_loss = 0.0
-    total_correct = 0
-    total_samples = 0
-    
-    # Track auxiliary losses
-    total_entropy_loss = 0.0
-    total_link_pred_loss = 0.0
-    
-    progress_bar = tqdm(dataloader, desc="Evaluating")
-    
-    for batch in progress_bar:
-        # Move batch to device
-        batch = batch.to(device)
-        
-        # Prepare inputs
+    def training_step(self, batch, batch_idx):
         h_V = (batch.node_s, batch.node_v)
         h_E = (batch.edge_s, batch.edge_v)
-        seq = batch.seq if hasattr(batch, 'seq') else None
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'W_s') else None
+        logits, aux_losses = self.model(h_V, batch.edge_index, h_E, seq, batch.batch)
         
-        # Forward pass
-        logits, aux_losses = model(h_V, batch.edge_index, h_E, seq=None, batch=batch.batch)
+        # Compute total loss with auxiliary losses
+        total_loss, loss_dict = self.model.compute_total_loss(logits, batch.y, aux_losses)
         
-        # Compute total loss
-        total_loss_tensor, loss_dict = model.compute_total_loss(logits, batch.y, aux_losses)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == batch.y).float().mean()
+        batch_size = batch.y.size(0)
         
-        # Statistics
-        total_loss += total_loss_tensor.item() * len(batch.y)
-        total_entropy_loss += aux_losses.get('entropy', 0.0).item() * len(batch.y) if torch.is_tensor(aux_losses.get('entropy', 0.0)) else 0.0
-        total_link_pred_loss += aux_losses.get('link_pred', 0.0).item() * len(batch.y) if torch.is_tensor(aux_losses.get('link_pred', 0.0)) else 0.0
+        # Log all loss components
+        self.log('train_loss', total_loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_acc', acc, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_classification_loss', loss_dict['classification'], on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_entropy_loss', loss_dict['entropy'], on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_link_pred_loss', loss_dict['link_pred'], on_step=True, on_epoch=True, batch_size=batch_size)
         
-        pred = torch.argmax(logits, dim=1)
-        total_correct += (pred == batch.y).sum().item()
-        total_samples += len(batch.y)
-        
-        # Update progress bar
-        current_acc = total_correct / total_samples
-        progress_bar.set_postfix({
-            'loss': f'{total_loss/total_samples:.4f}',
-            'acc': f'{current_acc:.4f}'
-        })
-        
-        # Clear GPU cache
-        torch.cuda.empty_cache()
-    
-    avg_loss = total_loss / total_samples
-    avg_acc = total_correct / total_samples
-    avg_entropy_loss = total_entropy_loss / total_samples
-    avg_link_pred_loss = total_link_pred_loss / total_samples
-    
-    aux_losses_avg = {
-        'entropy': avg_entropy_loss,
-        'link_pred': avg_link_pred_loss
-    }
-    
-    return avg_loss, avg_acc, aux_losses_avg
+        return total_loss
 
+    def on_train_epoch_end(self):
+        train_loss = self.trainer.callback_metrics.get('train_loss_epoch', 0.0)
+        train_acc = self.trainer.callback_metrics.get('train_acc_epoch', 0.0)
+        train_entropy = self.trainer.callback_metrics.get('train_entropy_loss_epoch', 0.0)
+        train_link_pred = self.trainer.callback_metrics.get('train_link_pred_loss_epoch', 0.0)
+        self.print(f"Epoch {self.current_epoch:3d} | Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
+        self.print(f"         | Entropy: {train_entropy:.4f} | Link Pred: {train_link_pred:.4f}")
 
-def train_epoch_diffpool(model, dataloader, optimizer, device):
-    """
-    Train DiffPool model for one epoch.
-    """
-    total_loss = 0.0
-    total_correct = 0
-    total_samples = 0
-    
-    # Track auxiliary losses
-    total_entropy_loss = 0.0
-    total_link_pred_loss = 0.0
-    
-    progress_bar = tqdm(dataloader, desc="Training")
-    
-    for batch in progress_bar:
-        optimizer.zero_grad()
-        
-        # Move batch to device
-        batch = batch.to(device)
-        
-        # Prepare inputs
+    def on_validation_epoch_end(self):
+        val_loss = self.trainer.callback_metrics.get('val_loss', 0.0)
+        val_acc = self.trainer.callback_metrics.get('val_acc', 0.0)
+        val_entropy = self.trainer.callback_metrics.get('val_entropy_loss', 0.0)
+        val_link_pred = self.trainer.callback_metrics.get('val_link_pred_loss', 0.0)
+        self.print(f"         | Val Loss:   {val_loss:.4f} | Val Acc:   {val_acc:.4f}")
+        self.print(f"         | Entropy: {val_entropy:.4f} | Link Pred: {val_link_pred:.4f}")
+        self.print("-" * 75)
+
+    def validation_step(self, batch, batch_idx):
         h_V = (batch.node_s, batch.node_v)
         h_E = (batch.edge_s, batch.edge_v)
-        seq = batch.seq if hasattr(batch, 'seq') else None
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'W_s') else None
+        logits, aux_losses = self.model(h_V, batch.edge_index, h_E, seq, batch.batch)
         
-        # Forward pass
-        logits, aux_losses = model(h_V, batch.edge_index, h_E, seq=None, batch=batch.batch)
+        # Compute total loss with auxiliary losses
+        total_loss, loss_dict = self.model.compute_total_loss(logits, batch.y, aux_losses)
         
-        # Compute total loss
-        total_loss_tensor, loss_dict = model.compute_total_loss(logits, batch.y, aux_losses)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == batch.y).float().mean()
+        batch_size = batch.y.size(0)
         
-        # Backward pass
-        total_loss_tensor.backward()
-        optimizer.step()
+        # Log all loss components
+        self.log('val_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_acc', acc, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_classification_loss', loss_dict['classification'], on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_entropy_loss', loss_dict['entropy'], on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_link_pred_loss', loss_dict['link_pred'], on_step=False, on_epoch=True, batch_size=batch_size)
         
-        # Statistics
-        total_loss += total_loss_tensor.item() * len(batch.y)
-        total_entropy_loss += aux_losses.get('entropy', 0.0).item() * len(batch.y) if torch.is_tensor(aux_losses.get('entropy', 0.0)) else 0.0
-        total_link_pred_loss += aux_losses.get('link_pred', 0.0).item() * len(batch.y) if torch.is_tensor(aux_losses.get('link_pred', 0.0)) else 0.0
-        
-        pred = torch.argmax(logits, dim=1)
-        total_correct += (pred == batch.y).sum().item()
-        total_samples += len(batch.y)
-        
-        # Update progress bar
-        current_acc = total_correct / total_samples
-        progress_bar.set_postfix({
-            'loss': f'{total_loss/total_samples:.4f}',
-            'acc': f'{current_acc:.4f}'
-        })
-        
-        # Clear GPU cache
-        torch.cuda.empty_cache()
-    
-    avg_loss = total_loss / total_samples
-    avg_acc = total_correct / total_samples
-    avg_entropy_loss = total_entropy_loss / total_samples
-    avg_link_pred_loss = total_link_pred_loss / total_samples
-    
-    aux_losses_avg = {
-        'entropy': avg_entropy_loss,
-        'link_pred': avg_link_pred_loss
-    }
-    
-    return avg_loss, avg_acc, aux_losses_avg
+        return total_loss
 
+    def test_step(self, batch, batch_idx):
+        h_V = (batch.node_s, batch.node_v)
+        h_E = (batch.edge_s, batch.edge_v)
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'W_s') else None
+        logits, aux_losses = self.model(h_V, batch.edge_index, h_E, seq, batch.batch)
+        
+        # Compute total loss with auxiliary losses
+        total_loss, loss_dict = self.model.compute_total_loss(logits, batch.y, aux_losses)
+        
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == batch.y).float().mean()
+        batch_size = batch.y.size(0)
+        
+        # Log all loss components
+        self.log('test_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_acc', acc, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_classification_loss', loss_dict['classification'], on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_entropy_loss', loss_dict['entropy'], on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_link_pred_loss', loss_dict['link_pred'], on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        return total_loss
 
-def main():
-    # set seed
-    set_seed(seed)
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        return optimizer
+
+@hydra.main(version_base="1.1", config_path='conf', config_name='config_diffpool')
+def main(cfg: DictConfig):
+    print(OmegaConf.to_yaml(cfg))
+    set_seed(cfg.train.seed)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+
+    # Custom output directory: ./outputs/wandb_project/dataset_name/timestamp
+    custom_output_dir = os.path.join(
+        "./outputs",
+        cfg.train.wandb_project,
+        cfg.data.dataset_name,
+        timestamp
+    )
+    os.makedirs(custom_output_dir, exist_ok=True)
+    
+    print(f"Output directory: {custom_output_dir}")
 
     # Get datasets
     train_dataset, val_dataset, test_dataset, num_classes = get_dataset(
-        dataset_name=dataset_name,
-        split=split,
-        split_similarity_threshold=split_similarity_threshold,
-        data_dir="./data",
+        dataset_name=cfg.data.dataset_name,
+        split=cfg.data.split,
+        split_similarity_threshold=cfg.data.split_similarity_threshold,
+        data_dir=cfg.data.data_dir,
     )
 
-    model = GVPDiffPoolGraphSAGEModel(
-        node_in_dim=(6, 3),
-        node_h_dim=(100, 16),   
-        edge_in_dim=(32, 1),
-        edge_h_dim=(32, 1),
-        num_classes=num_classes,
-        seq_in=False,
-        num_layers=3,
-        drop_rate=0.1,
-        pooling="sum",
-        max_clusters=max_clusters,
-        entropy_weight=entropy_weight,
-        link_pred_weight=link_pred_weight
+    train_loader = create_dataloader(train_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=True)
+    val_loader = create_dataloader(val_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False)
+    test_loader = create_dataloader(test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False)
+
+    # Model
+    model = GVPDiffPool(cfg.model, cfg.train, num_classes)
+
+    # Logger
+    wandb_logger = WandbLogger(project=cfg.train.wandb_project) if cfg.train.use_wandb else None
+
+    # Checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_acc',
+        mode='max',
+        save_top_k=1,
+        dirpath=custom_output_dir,
+        filename='best-{epoch:02d}-{val_acc:.3f}',
+        save_last=True
     )
 
-    print(f"Dataset: {dataset_name}")
-    print(f"Split: {split}")
+    # Trainer
+    trainer = pl.Trainer(
+        max_epochs=cfg.train.epochs,
+        logger=wandb_logger,
+        accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+        devices=1 if torch.cuda.is_available() else None,
+        log_every_n_steps=10,
+        default_root_dir=custom_output_dir,
+        callbacks=[checkpoint_callback]
+    )
+
+    # Print training header
+    print("\n" + "=" * 75)
+    print("DIFFPOOL TRAINING STARTED")
+    print("=" * 75)
+    print(f"Dataset: {cfg.data.dataset_name}")
+    print(f"Split: {cfg.data.split}")
     print(f"Number of classes: {num_classes}")
-    print(f"DiffPool max clusters: {max_clusters}")
-    print(f"Entropy weight: {entropy_weight}")
-    print(f"Link prediction weight: {link_pred_weight}")
+    print(f"DiffPool max clusters: {cfg.model.max_clusters}")
+    print(f"Entropy weight: {cfg.model.entropy_weight}")
+    print(f"Link prediction weight: {cfg.model.link_pred_weight}")
+    print("=" * 75)
 
-    trained_model = train_diffpool_model(
-        model,
-        train_dataset,
-        val_dataset,
-        test_dataset,
-        epochs=150,
-        lr=1e-4,
-        batch_size=64,
-        num_workers=4,
-        models_dir="./models",
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        use_wandb=True
-    )
+    trainer.fit(model, train_loader, val_loader)
+    
+    print("\n" + "=" * 75)
+    print("TESTING")
+    print("=" * 75)
+    
+    trainer.test(model, test_loader)
 
+    # Save best model and summary manually (original functionality)
+    if wandb_logger is not None:
+        # Save model checkpoint
+        best_model_path = os.path.join(custom_output_dir, 'best_model.pt')
+        trainer.save_checkpoint(best_model_path)
+        wandb_logger.experiment.save(best_model_path)
+        # Log summary
+        wandb_logger.experiment.log({
+            "best_model_path": best_model_path
+        })
+        wandb.finish()
 
 if __name__ == "__main__":
     main()
+
