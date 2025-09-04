@@ -9,7 +9,6 @@ from tqdm import tqdm
 import json
 import argparse
 import math
-import copy
 from utils.proteinshake_dataset import get_dataset, create_dataloader
 from partoken_model import ParTokenModel
 from utils.utils import set_seed
@@ -21,6 +20,12 @@ import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 from typing import Dict, Optional, Tuple
+from interpretability import (
+    batch_interpretability_analysis, 
+    print_interpretability_summary,
+    plot_importance_distribution,
+    run_interpretability_analysis_example
+)
 
 
 class LossWeightScheduler:
@@ -63,6 +68,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
             num_layers=model_cfg.num_layers,
             drop_rate=model_cfg.drop_rate,
             pooling=model_cfg.pooling,
+            # partitioner parameters
             max_clusters=model_cfg.max_clusters,
             nhid=model_cfg.nhid,
             k_hop=model_cfg.k_hop,
@@ -71,6 +77,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
             tau_init=model_cfg.tau_init,
             tau_min=model_cfg.tau_min,
             tau_decay=model_cfg.tau_decay,
+            # codebook parameters
             codebook_size=model_cfg.codebook_size,
             codebook_dim=model_cfg.codebook_dim,
             codebook_beta=model_cfg.codebook_beta,
@@ -93,10 +100,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
         self.stage_epoch = 0
         self.total_epoch = 0
         self.bypass_codebook = True  # Start in stage 0 mode
-        
-        # Teacher model for knowledge distillation
-        self.teacher_classifier = None
-        self.use_knowledge_distillation = False
         
         # Loss weight scheduling
         self.loss_weight_scheduler = None
@@ -133,13 +136,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
             self.bypass_codebook = False
             self.model.unfreeze_all()
             
-            # Setup knowledge distillation
-            if stage_cfg.knowledge_distillation.enabled and self.teacher_classifier is not None:
-                self.use_knowledge_distillation = True
-                self.kd_temperature = stage_cfg.knowledge_distillation.temperature
-                self.kd_alpha = stage_cfg.knowledge_distillation.alpha
-                print("✓ Knowledge distillation enabled")
-            
             # Setup loss weight ramping
             if stage_cfg.loss_ramp.enabled:
                 self.loss_weight_scheduler = LossWeightScheduler(
@@ -174,14 +170,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
         print(f"✓ Loss weights: λ_vq={self.model.lambda_vq:.1e}, λ_ent={self.model.lambda_ent:.1e}, λ_psc={self.model.lambda_psc:.1e}")
         print(f"{'='*60}\n")
     
-    def save_teacher_model(self):
-        """Save current classifier as teacher for knowledge distillation."""
-        self.teacher_classifier = copy.deepcopy(self.model.classifier)
-        for param in self.teacher_classifier.parameters():
-            param.requires_grad = False
-        self.teacher_classifier.eval()
-        print("✓ Teacher model saved for knowledge distillation")
-    
     def forward(self, h_V, edge_index, h_E, seq=None, batch=None):
         return self.model(h_V, edge_index, h_E, seq, batch)
     
@@ -207,22 +195,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
         # Compute total loss
         total_loss = ce_loss + vq_loss
         
-        # Knowledge distillation loss
-        kd_loss = 0.0
-        if self.use_knowledge_distillation and self.teacher_classifier is not None:
-            # Get teacher predictions
-            with torch.no_grad():
-                # Extract combined features for teacher (same as in model forward)
-                combined_features = self._extract_combined_features(h_V, batch.edge_index, h_E, seq, batch.batch)
-                teacher_logits = self.teacher_classifier(combined_features)
-            
-            # KL divergence with temperature scaling
-            T = self.kd_temperature
-            student_probs = F.log_softmax(logits / T, dim=1)
-            teacher_probs = F.softmax(teacher_logits / T, dim=1)
-            kd_loss = F.kl_div(student_probs, teacher_probs, reduction='batchmean') * (T * T)
-            total_loss += self.kd_alpha * kd_loss
-        
         # Compute accuracy
         preds = torch.argmax(logits, dim=1)
         acc = (preds == batch.y).float().mean()
@@ -232,7 +204,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, batch_size=batch_size)
         self.log('train_ce_loss', ce_loss, on_step=True, on_epoch=True, batch_size=batch_size)
         self.log('train_vq_loss', vq_loss, on_step=True, on_epoch=True, batch_size=batch_size)
-        self.log('train_kd_loss', kd_loss, on_step=True, on_epoch=True, batch_size=batch_size)
         self.log('train_acc', acc, on_step=True, on_epoch=True, batch_size=batch_size)
         self.log('stage', float(self.current_stage), on_step=True, on_epoch=True, batch_size=batch_size)
         
@@ -274,8 +245,12 @@ class MultiStageParTokenLightning(pl.LightningModule):
         # Inter-cluster message passing on original cluster features
         refined_clusters = self.model.cluster_gcn(cluster_features, cluster_adj)
         
-        # Global pooling
-        cluster_pooled = self.model._masked_mean(refined_clusters, cluster_valid_mask)
+        # Use attention-weighted pooling if available, otherwise fall back to masked mean
+        if hasattr(self.model, '_attention_weighted_pooling'):
+            cluster_pooled, _ = self.model._attention_weighted_pooling(refined_clusters, cluster_valid_mask)
+        else:
+            cluster_pooled = self.model._masked_mean(refined_clusters, cluster_valid_mask)
+        
         residue_pooled = self.model._pool_nodes(node_features, batch)
         
         # Combine representations
@@ -293,42 +268,6 @@ class MultiStageParTokenLightning(pl.LightningModule):
         }
         
         return logits, assignment_matrix, extra
-    
-    def _extract_combined_features(self, h_V, edge_index, h_E, seq, batch):
-        """Extract combined features for teacher model."""
-        # This replicates the feature extraction part of the model
-        if seq is not None and self.model.seq_in:
-            seq_emb = self.model.sequence_embedding(seq)
-            h_V = (torch.cat([h_V[0], seq_emb], dim=-1), h_V[1])
-            
-        h_V_enc = self.model.node_encoder(h_V)
-        h_E_enc = self.model.edge_encoder(h_E)
-        
-        for layer in self.model.gvp_layers:
-            h_V_enc = layer(h_V_enc, edge_index, h_E_enc)
-            
-        node_features = self.model.output_projection(h_V_enc)
-        
-        if batch is None:
-            batch = torch.zeros(node_features.size(0), dtype=torch.long, device=node_features.device)
-        
-        from torch_geometric.utils import to_dense_batch, to_dense_adj
-        dense_x, mask = to_dense_batch(node_features, batch)
-        dense_adj = to_dense_adj(edge_index, batch)
-        
-        cluster_features, cluster_adj, assignment_matrix = self.model.partitioner(dense_x, dense_adj, mask)
-        cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
-        
-        if self.bypass_codebook:
-            refined_clusters = self.model.cluster_gcn(cluster_features, cluster_adj)
-        else:
-            quant_clusters, _, _, _ = self.model.codebook(cluster_features, mask=cluster_valid_mask)
-            refined_clusters = self.model.cluster_gcn(quant_clusters, cluster_adj)
-        
-        cluster_pooled = self.model._masked_mean(refined_clusters, cluster_valid_mask)
-        residue_pooled = self.model._pool_nodes(node_features, batch)
-        
-        return torch.cat([residue_pooled, cluster_pooled], dim=-1)
     
     def on_train_epoch_start(self):
         """Handle epoch-based updates."""
@@ -397,8 +336,12 @@ class MultiStageParTokenLightning(pl.LightningModule):
         
         if self.bypass_codebook:
             logits, assignment_matrix, extra = self._forward_bypass_codebook(h_V, batch.edge_index, h_E, seq, batch.batch)
+            # For bypass mode, we can't get attention importance scores
+            cluster_importance = None
         else:
-            logits, assignment_matrix, extra = self.model(h_V, batch.edge_index, h_E, seq, batch.batch)
+            logits, assignment_matrix, extra, cluster_importance = self.model(
+                h_V, batch.edge_index, h_E, seq, batch.batch, return_importance=True
+            )
         
         ce_loss = self.criterion(logits, batch.y)
         vq_loss = extra.get("vq_loss", 0.0)
@@ -412,7 +355,59 @@ class MultiStageParTokenLightning(pl.LightningModule):
         self.log('test_ce_loss', ce_loss, on_step=False, on_epoch=True, batch_size=batch_size)
         self.log('test_vq_loss', vq_loss, on_step=False, on_epoch=True, batch_size=batch_size)
         self.log('test_acc', acc, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        # Log importance statistics if available
+        if cluster_importance is not None:
+            # Compute importance statistics
+            valid_mask = (assignment_matrix.sum(dim=1) > 0)  # [B, S]
+            masked_importance = cluster_importance * valid_mask.float()
+            
+            # Average max importance per protein
+            max_importance = masked_importance.max(dim=1)[0].mean()
+            
+            # Entropy of importance distribution per protein
+            importance_entropy = []
+            for b in range(cluster_importance.size(0)):
+                valid_imp = masked_importance[b][valid_mask[b]]
+                if len(valid_imp) > 0:
+                    p = valid_imp + 1e-8
+                    entropy = (-p * torch.log(p)).sum()
+                    importance_entropy.append(entropy)
+            
+            if importance_entropy:
+                avg_entropy = torch.tensor(importance_entropy).mean()
+                self.log('test_importance_max', max_importance, on_step=False, on_epoch=True, batch_size=batch_size)
+                self.log('test_importance_entropy', avg_entropy, on_step=False, on_epoch=True, batch_size=batch_size)
+        
         return total_loss
+    
+    def get_interpretability_analysis(
+        self, 
+        dataloader, 
+        device: Optional[torch.device] = None,
+        max_batches: Optional[int] = None
+    ) -> Dict:
+        """
+        Run interpretability analysis on the current model state.
+        
+        Args:
+            dataloader: DataLoader to analyze
+            device: Device to run analysis on
+            max_batches: Maximum number of batches to process
+            
+        Returns:
+            Dictionary containing interpretability results
+        """
+        if self.bypass_codebook:
+            print("⚠️  Warning: Interpretability analysis not available in bypass_codebook mode")
+            return None
+            
+        return batch_interpretability_analysis(
+            model=self,
+            dataloader=dataloader,
+            device=device,
+            max_batches=max_batches
+        )
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.get_current_lr())
@@ -544,13 +539,9 @@ def main(cfg: DictConfig):
         print(f"\n📚 Training Stage {stage_idx} for {stage_cfg.epochs} epochs...")
         trainer.fit(model, train_loader, val_loader)
         
-        # Post-stage processing
-        if stage_idx == 0:  # After baseline stage
-            print("💾 Saving teacher model...")
-            model.save_teacher_model()
-            
-        elif stage_idx == 1:  # After codebook warmup
-            print("🔓 Enabling codebook for joint training...")
+        # Post-stage processing  
+        if stage_idx == 1:  # After codebook warmup
+            print("🔓 Codebook training completed...")
             
         # Save stage checkpoint
         stage_checkpoint_path = os.path.join(stage_output_dir, f'stage_{stage_idx}_final.ckpt')
@@ -577,6 +568,60 @@ def main(cfg: DictConfig):
     
     test_results = test_trainer.test(model, test_loader)
     
+    # Run interpretability analysis if not in bypass mode
+    if not model.bypass_codebook and cfg.multistage.get('run_interpretability', True):
+        print("\n🔍 INTERPRETABILITY ANALYSIS")
+        print("=" * 60)
+        
+        # Create interpretability output directory
+        interp_output_dir = os.path.join(custom_output_dir, "interpretability")
+        os.makedirs(interp_output_dir, exist_ok=True)
+        
+        # Run analysis
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        print("📊 Running interpretability analysis on test set...")
+        interp_results = model.get_interpretability_analysis(
+            test_loader, 
+            device=device,
+            max_batches=cfg.multistage.get('interpretability_max_batches', 20)
+        )
+        
+        if interp_results is not None:
+            # Save results
+            import json
+            results_path = os.path.join(interp_output_dir, "test_interpretability.json")
+            
+            # Convert tensors to lists for JSON serialization
+            def convert_for_json(obj):
+                if hasattr(obj, 'tolist'):
+                    return obj.tolist()
+                elif isinstance(obj, dict):
+                    return {k: convert_for_json(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_for_json(item) for item in obj]
+                else:
+                    return obj
+            
+            serializable_results = convert_for_json(interp_results)
+            
+            with open(results_path, 'w') as f:
+                json.dump(serializable_results, f, indent=2)
+            
+            # Print summary
+            print_interpretability_summary(interp_results)
+            
+            # Create visualization
+            try:
+                plot_path = os.path.join(interp_output_dir, "importance_analysis.png")
+                plot_importance_distribution(interp_results, save_path=plot_path)
+            except Exception as e:
+                print(f"⚠️  Could not create visualization: {e}")
+            
+            print(f"✓ Interpretability results saved to {interp_output_dir}")
+        else:
+            print("⚠️  Interpretability analysis skipped (bypass_codebook mode)")
+    
     # Save final model
     final_model_path = os.path.join(custom_output_dir, 'final_multistage_model.ckpt')
     test_trainer.save_checkpoint(final_model_path)
@@ -584,6 +629,12 @@ def main(cfg: DictConfig):
     print(f"\n🎉 MULTI-STAGE TRAINING COMPLETED!")
     print(f"📁 Final model saved to: {final_model_path}")
     print(f"📊 Final test accuracy: {test_results[0]['test_acc']:.4f}")
+    
+    # Print additional metrics if available
+    if 'test_importance_max' in test_results[0]:
+        print(f"🎯 Average max cluster importance: {test_results[0]['test_importance_max']:.3f}")
+        print(f"📈 Average importance entropy: {test_results[0]['test_importance_entropy']:.3f}")
+    
     print("=" * 60)
 
 

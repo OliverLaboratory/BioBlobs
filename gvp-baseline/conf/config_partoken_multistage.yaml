@@ -56,13 +56,16 @@ train:
 multistage:
   enabled: true
   
+  # Global interpretability settings
+  run_interpretability: true
+  interpretability_max_batches: 20
+  
   # Stage 0: Baseline (encoder + partitioner only)
   stage0:
     name: "baseline"
     epochs: 20
     lr: 1e-4
     bypass_codebook: true
-    save_teacher: true
     loss_weights:
       lambda_vq: 0.0      # No VQ loss in stage 0
       lambda_ent: 0.0     # No entropy loss in stage 0
@@ -86,10 +89,6 @@ multistage:
     name: "joint_finetuning"
     epochs: 15
     lr: 5e-5
-    knowledge_distillation:
-      enabled: true
-      temperature: 3.0
-      alpha: 0.1          # Weight for KD loss
     loss_ramp:
       enabled: true
       ramp_epochs: 5      # Gradually increase VQ weights over 5 epochs

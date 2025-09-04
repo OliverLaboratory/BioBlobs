@@ -131,6 +131,17 @@ class ParTokenModel(nn.Module):
         self.lambda_psc = lambda_psc
         self.psc_temp = psc_temp
         
+        # Use original cluster embeddings for classification (not quantized)
+        self.use_quantized_for_classification = False
+        
+        # Attention mechanism for cluster importance
+        self.cluster_attention = nn.Sequential(
+            nn.Linear(ns, ns // 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(drop_rate),
+            nn.Linear(ns // 2, 1)
+        )
+        
         # Classification head
         self.classifier = nn.Sequential(
             nn.Linear(2 * ns, 4 * ns), 
@@ -156,6 +167,39 @@ class ParTokenModel(nn.Module):
         w = mask.float().unsqueeze(-1)
         denom = w.sum(dim=1).clamp_min(1.0)
         return (x * w).sum(dim=1) / denom
+    
+    def _attention_weighted_pooling(
+        self, 
+        x: torch.Tensor, 
+        mask: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Attention-weighted pooling over cluster dimension with importance scores.
+
+        Args:
+            x: Cluster features [B, S, D]
+            mask: Boolean mask [B, S] (True = include valid clusters)
+
+        Returns:
+            pooled: Attention-weighted pooled features [B, D]
+            importance_scores: Normalized attention weights [B, S]
+        """
+        # Compute attention scores
+        attention_logits = self.cluster_attention(x).squeeze(-1)  # [B, S]
+        
+        # Mask out invalid clusters (set to large negative value)
+        attention_logits = attention_logits.masked_fill(~mask, -1e9)
+        
+        # Softmax over valid clusters
+        attention_weights = torch.softmax(attention_logits, dim=-1)  # [B, S]
+        
+        # Zero out attention weights for invalid clusters (for safety)
+        attention_weights = attention_weights * mask.float()
+        
+        # Weighted pooling
+        pooled = torch.sum(x * attention_weights.unsqueeze(-1), dim=1)  # [B, D]
+        
+        return pooled, attention_weights
     
     def _pool_nodes(self, node_features: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
         """Pool node features to graph level."""
@@ -249,17 +293,56 @@ class ParTokenModel(nn.Module):
         """Update epoch counter for temperature annealing."""
         self.partitioner.update_epoch()
     
-    def get_clustering_stats(
+    def get_cluster_importance(
         self, 
         h_V: Tuple[torch.Tensor, torch.Tensor], 
         edge_index: torch.Tensor, 
         h_E: Tuple[torch.Tensor, torch.Tensor], 
         seq: Optional[torch.Tensor] = None, 
         batch: Optional[torch.Tensor] = None
-    ) -> dict:
-        """Get detailed clustering statistics."""
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Get cluster importance scores for interpretability analysis.
+        
+        Args:
+            h_V: Node features (scalar, vector)
+            edge_index: Edge connectivity
+            h_E: Edge features (scalar, vector)
+            seq: Optional sequence tensor
+            batch: Batch vector
+            
+        Returns:
+            predictions: Class predictions [B]
+            probabilities: Class probabilities [B, num_classes]
+            importance_scores: Cluster importance weights [B, S]
+        """
         with torch.no_grad():
-            logits, assignment_matrix, _ = self.forward(h_V, edge_index, h_E, seq, batch)
+            logits, assignment_matrix, extra, cluster_importance = self.forward(
+                h_V, edge_index, h_E, seq, batch, return_importance=True
+            )
+            predictions = torch.argmax(logits, dim=-1)
+            probabilities = torch.softmax(logits, dim=-1)
+            
+            return predictions, probabilities, cluster_importance
+    
+    def get_clustering_stats(
+        self, 
+        h_V: Tuple[torch.Tensor, torch.Tensor], 
+        edge_index: torch.Tensor, 
+        h_E: Tuple[torch.Tensor, torch.Tensor], 
+        seq: Optional[torch.Tensor] = None, 
+        batch: Optional[torch.Tensor] = None,
+        include_importance: bool = True
+    ) -> dict:
+        """Get detailed clustering statistics with optional importance scores."""
+        with torch.no_grad():
+            if include_importance:
+                logits, assignment_matrix, extra, cluster_importance = self.forward(
+                    h_V, edge_index, h_E, seq, batch, return_importance=True
+                )
+            else:
+                logits, assignment_matrix, extra = self.forward(h_V, edge_index, h_E, seq, batch)
+                cluster_importance = None
             
             if batch is None:
                 batch = torch.zeros(
@@ -303,7 +386,8 @@ class ParTokenModel(nn.Module):
             
             avg_cluster_size_per_protein = torch.tensor(avg_cluster_size_per_protein)
             
-            return {
+            # Base statistics
+            stats = {
                 'logits': logits,
                 'assignment_matrix': assignment_matrix,
                 'avg_coverage': coverage.mean().item(),
@@ -315,6 +399,39 @@ class ParTokenModel(nn.Module):
                 'max_cluster_size': avg_cluster_size_per_protein.max().item(),
                 'total_proteins': len(coverage)
             }
+            
+            # Add importance statistics if available
+            if cluster_importance is not None:
+                # Mask importance scores for valid clusters only
+                valid_importance = cluster_importance * non_empty_clusters.float()
+                
+                # Statistics per protein
+                max_importance_per_protein = []
+                min_importance_per_protein = []
+                entropy_per_protein = []
+                
+                for b in range(cluster_importance.size(0)):
+                    valid_scores = valid_importance[b][non_empty_clusters[b]]
+                    if len(valid_scores) > 0:
+                        max_importance_per_protein.append(valid_scores.max().item())
+                        min_importance_per_protein.append(valid_scores.min().item())
+                        # Compute entropy of importance distribution
+                        p = valid_scores + 1e-8  # avoid log(0)
+                        entropy_per_protein.append((-p * torch.log(p)).sum().item())
+                    else:
+                        max_importance_per_protein.append(0.0)
+                        min_importance_per_protein.append(0.0)
+                        entropy_per_protein.append(0.0)
+                
+                stats.update({
+                    'cluster_importance': cluster_importance,
+                    'avg_max_importance': np.mean(max_importance_per_protein),
+                    'avg_min_importance': np.mean(min_importance_per_protein),
+                    'avg_importance_entropy': np.mean(entropy_per_protein),
+                    'importance_concentration': 1.0 - np.mean(entropy_per_protein),  # Higher = more concentrated
+                })
+            
+            return stats
         
     @torch.no_grad()
     def extract_pre_gcn_clusters(
@@ -405,7 +522,7 @@ class ParTokenModel(nn.Module):
         Freeze encoder, partitioner, and classifier so only the codebook trains.
         """
         for m in [self.node_encoder, self.edge_encoder, *self.gvp_layers, self.output_projection,
-                  self.partitioner, self.cluster_gcn, self.classifier]:
+                  self.partitioner, self.cluster_gcn, self.cluster_attention, self.classifier]:
             for p in m.parameters():
                 p.requires_grad = False
         for p in self.codebook.parameters():
@@ -416,7 +533,7 @@ class ParTokenModel(nn.Module):
         Unfreeze all model parameters (joint fine-tuning).
         """
         for m in [self.node_encoder, self.edge_encoder, *self.gvp_layers, self.output_projection,
-                  self.partitioner, self.cluster_gcn, self.classifier, self.codebook]:
+                  self.partitioner, self.cluster_gcn, self.cluster_attention, self.classifier, self.codebook]:
             for p in m.parameters():
                 p.requires_grad = True
 
@@ -426,7 +543,8 @@ class ParTokenModel(nn.Module):
         edge_index: torch.Tensor, 
         h_E: Tuple[torch.Tensor, torch.Tensor], 
         seq: Optional[torch.Tensor] = None, 
-        batch: Optional[torch.Tensor] = None
+        batch: Optional[torch.Tensor] = None,
+        return_importance: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the model.
@@ -484,13 +602,18 @@ class ParTokenModel(nn.Module):
         )
 
         # Inter-cluster message passing
-        # refined_clusters = self.cluster_gcn(cluster_features, cluster_adj)
-
-        # Inter-cluster message passing on quantized clusters
-        refined_clusters = self.cluster_gcn(quant_clusters, cluster_adj)  # [B, S, ns]
+        # Choose between quantized or original clusters for classification
+        if getattr(self, 'use_quantized_for_classification', True):
+            # Use quantized clusters (default behavior)
+            refined_clusters = self.cluster_gcn(quant_clusters, cluster_adj)  # [B, S, ns]
+        else:
+            # Use original clusters for classification, quantized for regularization only
+            refined_clusters = self.cluster_gcn(cluster_features, cluster_adj)  # [B, S, ns]
         
-        # Global pooling (masked mean over clusters)
-        cluster_pooled = self._masked_mean(refined_clusters, cluster_valid_mask)  # [B, ns]
+        # Attention-weighted pooling with importance scores
+        cluster_pooled, cluster_importance = self._attention_weighted_pooling(
+            refined_clusters, cluster_valid_mask
+        )  # [B, ns], [B, S]
         residue_pooled = self._pool_nodes(node_features, batch)  # [B, ns]
         
         # Combine representations
@@ -512,6 +635,8 @@ class ParTokenModel(nn.Module):
             "presence": p_gk
         }
 
+        if return_importance:
+            return logits, assignment_matrix, extra, cluster_importance
         return logits, assignment_matrix, extra
 
 
