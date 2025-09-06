@@ -20,35 +20,18 @@ import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 from typing import Dict, Optional, Tuple
-from interpretability import (
+from utils.interpretability import (
     batch_interpretability_analysis, 
     print_interpretability_summary,
     plot_importance_distribution,
     run_interpretability_analysis_example
 )
 
-
-class LossWeightScheduler:
-    """Scheduler for gradually ramping loss weights during training."""
-    
-    def __init__(self, initial_weights: Dict[str, float], final_weights: Dict[str, float], ramp_epochs: int):
-        self.initial_weights = initial_weights
-        self.final_weights = final_weights
-        self.ramp_epochs = ramp_epochs
-        
-    def get_weights(self, epoch: int) -> Dict[str, float]:
-        """Get interpolated weights for current epoch."""
-        if epoch >= self.ramp_epochs:
-            return self.final_weights.copy()
-            
-        alpha = epoch / self.ramp_epochs
-        weights = {}
-        for key in self.initial_weights:
-            initial_val = self.initial_weights[key]
-            final_val = self.final_weights.get(key, initial_val)
-            weights[key] = (1 - alpha) * initial_val + alpha * final_val
-        return weights
-
+from utils.save_checkpoints import (
+    save_stage_specific_checkpoint,
+    create_checkpoint_summary
+)
+from utils.loss_schedulers import LossWeightScheduler
 
 class MultiStageParTokenLightning(pl.LightningModule):
     """Multi-stage ParToken Lightning module with stage management."""
@@ -399,7 +382,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
             Dictionary containing interpretability results
         """
         if self.bypass_codebook:
-            print("⚠️  Warning: Interpretability analysis not available in bypass_codebook mode")
+            print("⚠️ Warning: Interpretability analysis not available in bypass_codebook mode")
             return None
             
         return batch_interpretability_analysis(
@@ -447,16 +430,10 @@ def main(cfg: DictConfig):
     
     set_seed(cfg.train.seed)
     
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    
-    # Custom output directory
-    custom_output_dir = os.path.join(
-        "./outputs",
-        cfg.train.wandb_project,
-        cfg.data.dataset_name,
-        f"multistage_{timestamp}"
-    )
-    os.makedirs(custom_output_dir, exist_ok=True)
+    # Use Hydra's output directory to ensure consistency
+    from hydra.core.hydra_config import HydraConfig
+    hydra_cfg = HydraConfig.get()
+    custom_output_dir = hydra_cfg.runtime.output_dir
     
     print(f"Output directory: {custom_output_dir}")
     
@@ -500,6 +477,7 @@ def main(cfg: DictConfig):
         # Logger for this stage
         wandb_logger = None
         if cfg.train.use_wandb:
+            timestamp = datetime.now().strftime("%Y-%m-%d")
             wandb_logger = WandbLogger(
                 project=cfg.train.wandb_project,
                 name=f"{stage_name.lower()}_{timestamp}",
@@ -547,6 +525,21 @@ def main(cfg: DictConfig):
         stage_checkpoint_path = os.path.join(stage_output_dir, f'stage_{stage_idx}_final.ckpt')
         trainer.save_checkpoint(stage_checkpoint_path)
         print(f"✓ Stage {stage_idx} checkpoint saved to {stage_checkpoint_path}")
+        
+        # Save stage-specific components checkpoint
+        stage_info = {
+            'epoch': stage_cfg.epochs,
+            'val_acc': trainer.callback_metrics.get('val_acc', 0.0).item() if 'val_acc' in trainer.callback_metrics else 0.0,
+            'val_loss': trainer.callback_metrics.get('val_loss', 0.0).item() if 'val_loss' in trainer.callback_metrics else 0.0,
+        }
+        
+        component_checkpoint_path = save_stage_specific_checkpoint(
+            model, 
+            stage_idx, 
+            stage_output_dir, 
+            stage_info
+        )
+        print(f"✓ Stage {stage_idx} component checkpoint saved to {component_checkpoint_path}")
         
         # Close wandb run for this stage
         if wandb_logger is not None:
@@ -626,8 +619,12 @@ def main(cfg: DictConfig):
     final_model_path = os.path.join(custom_output_dir, 'final_multistage_model.ckpt')
     test_trainer.save_checkpoint(final_model_path)
     
+    # Create checkpoint summary
+    summary_path = create_checkpoint_summary(custom_output_dir)
+    
     print(f"\n🎉 MULTI-STAGE TRAINING COMPLETED!")
     print(f"📁 Final model saved to: {final_model_path}")
+    print(f"📋 Checkpoint summary: {summary_path}")
     print(f"📊 Final test accuracy: {test_results[0]['test_acc']:.4f}")
     
     # Print additional metrics if available
@@ -640,3 +637,4 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
+    # pass

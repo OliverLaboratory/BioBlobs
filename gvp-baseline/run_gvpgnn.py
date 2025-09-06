@@ -17,8 +17,6 @@ import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-# # Set torch matmul precision to suppress warnings
-# torch.set_float32_matmul_precision('highest')
 
 class GVPBaseline(pl.LightningModule):
     def __init__(self, model_cfg, train_cfg, num_classes):
