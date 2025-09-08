@@ -1,9 +1,9 @@
 models
-gvp-baseline/data
+/data
 *.pyc
-gvp-baseline/wandb
-gvp-baseline/__pycache__
-gvp-baseline/models
-gvp-baseline/outputs
-gvp-baseline/saved_models
-gvp-baseline/pdb
+/wandb
+__pycache__
+/models
+/outputs
+/saved_models
+/pdb

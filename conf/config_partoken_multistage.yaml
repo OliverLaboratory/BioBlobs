@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/multistage_${now:%Y-%m-%d}
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/multistage_${now:%Y-%m-%d}
   output_subdir: null
 
 data:
