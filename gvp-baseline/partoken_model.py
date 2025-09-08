@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import to_dense_batch, to_dense_adj
 from torch_scatter import scatter_mean, scatter_sum, scatter_max
-import gvp
 from gvp.models import GVP, GVPConvLayer, LayerNorm
 from typing import Tuple, Optional
 import numpy as np
@@ -63,7 +62,7 @@ class ParTokenModel(nn.Module):
         codebook_cosine_normalize: bool = False,
         # Loss weights
         lambda_vq: float = 1.0,
-        lambda_ent: float = 1e-3,
+        lambda_ent: float = 0.0,    # Not used in loss (kept for backward compatibility)
         lambda_psc: float = 1e-2,
         psc_temp: float = 0.3
     ):
@@ -223,7 +222,7 @@ class ParTokenModel(nn.Module):
         extra: dict
     ) -> Tuple[torch.Tensor, dict]:
         """
-        Compute total loss combining classification, VQ, entropy, and coverage components.
+        Compute total loss combining classification, VQ, and coverage components.
 
         Args:
             logits: Classification logits [B, num_classes]
@@ -231,7 +230,7 @@ class ParTokenModel(nn.Module):
             extra: Extra outputs from forward() with keys:
                 - 'vq_loss': scalar
                 - 'presence': [B, K] soft presence per graph
-                - 'vq_info': dict with 'perplexity', 'codebook_loss', 'commitment_loss'
+                - 'vq_info': dict with 'perplexity', 'commitment_loss'
 
         Returns:
             total_loss: Aggregated loss tensor
@@ -240,26 +239,27 @@ class ParTokenModel(nn.Module):
         L_cls = F.cross_entropy(logits, labels)
         L_vq = extra["vq_loss"]
 
-        # Usage entropy regularizer (small)
-        L_ent = self.codebook.entropy_loss(weight=1.0)
-
         # Probabilistic set cover (coverage) loss
         p_gk = extra["presence"].clamp(0, 1)               # [B, K]
         coverage = 1.0 - torch.prod(1.0 - p_gk, dim=-1)    # [B]
         L_psc = -coverage.mean()
 
-        total = L_cls + self.lambda_vq * L_vq + self.lambda_ent * L_ent + self.lambda_psc * L_psc
+        # Total loss without entropy term
+        total = L_cls + self.lambda_vq * L_vq + self.lambda_psc * L_psc
+
+        # Compute entropy for monitoring only (not in loss)
+        L_ent = self.codebook.entropy_loss(weight=1.0)
 
         metrics = {
             "loss/total": float(total.detach().cpu()),
             "loss/cls": float(L_cls.detach().cpu()),
-            "loss/vq": float(L_vq.detach().cpu()),
-            "loss/ent": float(L_ent.detach().cpu()),
+            "loss/vq_commit": float(L_vq.detach().cpu()),
             "loss/psc": float(L_psc.detach().cpu()),
-            "codebook/perplexity": float(extra["vq_info"]["perplexity"].detach().cpu()),
-            "codebook/codebook_loss": float(extra["vq_info"]["codebook_loss"].detach().cpu()),
+            "metric/entropy": float(L_ent.detach().cpu()),  # monitoring only
+            "metric/perplexity": float(extra["vq_info"]["perplexity"].detach().cpu()),
             "codebook/commitment_loss": float(extra["vq_info"]["commitment_loss"].detach().cpu()),
             "coverage/mean": float(coverage.mean().detach().cpu()),
+            "metric/presence_mean": float(extra["presence"].mean(dim=0).mean().detach().cpu()),  # batch usage
         }
         return total, metrics
    
@@ -293,16 +293,16 @@ class ParTokenModel(nn.Module):
         """Update epoch counter for temperature annealing."""
         self.partitioner.update_epoch()
     
-    def get_cluster_importance(
+    def get_cluster_analysis(
         self, 
         h_V: Tuple[torch.Tensor, torch.Tensor], 
         edge_index: torch.Tensor, 
         h_E: Tuple[torch.Tensor, torch.Tensor], 
         seq: Optional[torch.Tensor] = None, 
         batch: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """
-        Get cluster importance scores for interpretability analysis.
+        Combined function to get cluster importance scores and clustering statistics in one pass.
         
         Args:
             h_V: Node features (scalar, vector)
@@ -315,35 +315,19 @@ class ParTokenModel(nn.Module):
             predictions: Class predictions [B]
             probabilities: Class probabilities [B, num_classes]
             importance_scores: Cluster importance weights [B, S]
+            stats: Dict with detailed clustering statistics including assignment_matrix
         """
         with torch.no_grad():
+            # Single forward pass to get all needed information
             logits, assignment_matrix, extra, cluster_importance = self.forward(
                 h_V, edge_index, h_E, seq, batch, return_importance=True
             )
+            
+            # Get predictions and probabilities
             predictions = torch.argmax(logits, dim=-1)
             probabilities = torch.softmax(logits, dim=-1)
             
-            return predictions, probabilities, cluster_importance
-    
-    def get_clustering_stats(
-        self, 
-        h_V: Tuple[torch.Tensor, torch.Tensor], 
-        edge_index: torch.Tensor, 
-        h_E: Tuple[torch.Tensor, torch.Tensor], 
-        seq: Optional[torch.Tensor] = None, 
-        batch: Optional[torch.Tensor] = None,
-        include_importance: bool = True
-    ) -> dict:
-        """Get detailed clustering statistics with optional importance scores."""
-        with torch.no_grad():
-            if include_importance:
-                logits, assignment_matrix, extra, cluster_importance = self.forward(
-                    h_V, edge_index, h_E, seq, batch, return_importance=True
-                )
-            else:
-                logits, assignment_matrix, extra = self.forward(h_V, edge_index, h_E, seq, batch)
-                cluster_importance = None
-            
+            # Handle batch indices
             if batch is None:
                 batch = torch.zeros(
                     h_V[0].size(0), 
@@ -351,7 +335,7 @@ class ParTokenModel(nn.Module):
                     device=h_V[0].device
                 )
             
-            # Get node features
+            # Get node features for statistics 
             if seq is not None and self.seq_in:
                 seq_emb = self.sequence_embedding(seq)
                 h_V_aug = (torch.cat([h_V[0], seq_emb], dim=-1), h_V[1])
@@ -365,7 +349,7 @@ class ParTokenModel(nn.Module):
             node_features = self.output_projection(h_V_processed)
             dense_x, mask = to_dense_batch(node_features, batch)
             
-            # Compute statistics
+            # Compute clustering statistics
             total_nodes = mask.sum(dim=-1).float()
             assigned_nodes = assignment_matrix.sum(dim=(1, 2))
             coverage = assigned_nodes / (total_nodes + 1e-8)
@@ -388,7 +372,6 @@ class ParTokenModel(nn.Module):
             
             # Base statistics
             stats = {
-                'logits': logits,
                 'assignment_matrix': assignment_matrix,
                 'avg_coverage': coverage.mean().item(),
                 'min_coverage': coverage.min().item(),
@@ -400,7 +383,7 @@ class ParTokenModel(nn.Module):
                 'total_proteins': len(coverage)
             }
             
-            # Add importance statistics if available
+            # Add importance statistics
             if cluster_importance is not None:
                 # Mask importance scores for valid clusters only
                 valid_importance = cluster_importance * non_empty_clusters.float()
@@ -424,14 +407,13 @@ class ParTokenModel(nn.Module):
                         entropy_per_protein.append(0.0)
                 
                 stats.update({
-                    'cluster_importance': cluster_importance,
                     'avg_max_importance': np.mean(max_importance_per_protein),
                     'avg_min_importance': np.mean(min_importance_per_protein),
                     'avg_importance_entropy': np.mean(entropy_per_protein),
                     'importance_concentration': 1.0 - np.mean(entropy_per_protein),  # Higher = more concentrated
                 })
             
-            return stats
+            return predictions, probabilities, cluster_importance, stats
         
     @torch.no_grad()
     def extract_pre_gcn_clusters(
@@ -622,17 +604,17 @@ class ParTokenModel(nn.Module):
         # Classification
         logits = self.classifier(combined_features)
         
-        with torch.no_grad():
-            p_gk = self.codebook.soft_presence(
-                cluster_features.detach(), cluster_valid_mask, temperature=self.psc_temp
-            )
+        # Use differentiable presence (no torch.no_grad())
+        p_gk = self.codebook.differentiable_presence(
+            cluster_features, cluster_valid_mask, temperature=self.psc_temp
+        )
 
-        # Extra info for loss/metrics
+        # Extra info for loss/metrics (no aux_losses from partitioner)
         extra = {
             "vq_loss": vq_loss,
             "vq_info": vq_info,
             "code_indices": code_indices,
-            "presence": p_gk
+            "presence": p_gk,
         }
 
         if return_importance:
@@ -740,10 +722,10 @@ def demonstrate_model():
     print(f"  Assignment matrix shape: {assignment_matrix.shape}")
     print(f"  Total loss: {total_loss.item():.4f}")
     print(f"  Classification loss: {metrics['loss/cls']:.4f}")
-    print(f"  VQ loss: {metrics['loss/vq']:.4f}")
-    print(f"  Entropy loss: {metrics['loss/ent']:.6f}")
+    print(f"  VQ loss: {metrics['loss/vq_commit']:.4f}")
+    print(f"  Entropy loss: {metrics['metric/entropy']:.6f}")
     print(f"  Coverage loss: {metrics['loss/psc']:.4f}")
-    print(f"  Codebook perplexity: {metrics['codebook/perplexity']:.2f}")
+    print(f"  Codebook perplexity: {metrics['metric/perplexity']:.2f}")
     print(f"  Mean coverage: {metrics['coverage/mean']:.3f}")
     
     # === 2. INFERENCE MODE DEMONSTRATION ===

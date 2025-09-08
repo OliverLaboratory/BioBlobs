@@ -78,7 +78,7 @@ def save_stage0_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = 
 
 def save_stage1_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
     """
-    Save Stage 1 checkpoint: codebook parameters.
+    Save Stage 1 checkpoint: complete model with codebook (joint fine-tuning).
     
     Args:
         model: The ParToken Lightning model
@@ -90,63 +90,7 @@ def save_stage1_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = 
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Extract codebook-specific components
-    checkpoint_data = {
-        # Codebook parameters
-        'codebook': model.model.codebook.state_dict(),
-        
-        # Codebook configuration
-        'codebook_config': {
-            'codebook_size': model.model.codebook_size,
-            'codebook_dim': model.model.codebook_dim,
-            'codebook_beta': model.model.codebook_beta,
-            'codebook_decay': model.model.codebook_decay,
-            'codebook_eps': model.model.codebook_eps,
-            'codebook_distance': model.model.codebook_distance,
-            'codebook_cosine_normalize': model.model.codebook_cosine_normalize,
-        },
-        
-        # Loss weights at end of stage 1
-        'loss_weights': {
-            'lambda_vq': model.model.lambda_vq,
-            'lambda_ent': model.model.lambda_ent,
-            'lambda_psc': model.model.lambda_psc,
-        },
-        
-        # Stage metadata
-        'stage_info': {
-            'stage': 1,
-            'stage_name': 'codebook_warmup',
-            'timestamp': datetime.now().isoformat(),
-            'components': ['codebook'],
-            **(stage_info or {})
-        }
-    }
-    
-    checkpoint_path = os.path.join(output_dir, 'stage1_codebook.ckpt')
-    torch.save(checkpoint_data, checkpoint_path)
-    
-    print(f"✓ Stage 1 checkpoint saved: {checkpoint_path}")
-    print(f"  Components: codebook")
-    
-    return checkpoint_path
-
-
-def save_stage2_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
-    """
-    Save Stage 2 checkpoint: all updated model components.
-    
-    Args:
-        model: The ParToken Lightning model
-        output_dir: Directory to save the checkpoint
-        stage_info: Optional dictionary with stage metadata
-        
-    Returns:
-        Path to saved checkpoint file
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Save complete model state
+    # Save complete model state for joint fine-tuning
     checkpoint_data = {
         # Complete model state dict
         'model_state_dict': model.model.state_dict(),
@@ -191,21 +135,28 @@ def save_stage2_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = 
             'total_epochs': model.total_epoch,
         },
         
+        # Loss weights at end of stage 1
+        'loss_weights': {
+            'lambda_vq': model.model.lambda_vq,
+            'lambda_ent': model.model.lambda_ent,
+            'lambda_psc': model.model.lambda_psc,
+        },
+        
         # Stage metadata
         'stage_info': {
-            'stage': 2,
+            'stage': 1,
             'stage_name': 'joint_finetuning',
             'timestamp': datetime.now().isoformat(),
-            'components': ['all_model_components'],
+            'components': ['complete_model_with_codebook'],
             **(stage_info or {})
         }
     }
     
-    checkpoint_path = os.path.join(output_dir, 'stage2_complete_model.ckpt')
+    checkpoint_path = os.path.join(output_dir, 'stage1_complete_model.ckpt')
     torch.save(checkpoint_data, checkpoint_path)
     
-    print(f"✓ Stage 2 checkpoint saved: {checkpoint_path}")
-    print(f"  Components: complete model (all parameters updated)")
+    print(f"✓ Stage 1 checkpoint saved: {checkpoint_path}")
+    print(f"  Components: complete model with codebook")
     
     return checkpoint_path
 
@@ -221,7 +172,7 @@ def save_stage_specific_checkpoint(
     
     Args:
         model: The ParToken Lightning model
-        stage_idx: Stage index (0, 1, or 2)
+        stage_idx: Stage index (0 or 1)
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata
         
@@ -232,10 +183,8 @@ def save_stage_specific_checkpoint(
         return save_stage0_checkpoint(model, output_dir, stage_info)
     elif stage_idx == 1:
         return save_stage1_checkpoint(model, output_dir, stage_info)
-    elif stage_idx == 2:
-        return save_stage2_checkpoint(model, output_dir, stage_info)
     else:
-        raise ValueError(f"Invalid stage index: {stage_idx}. Must be 0, 1, or 2.")
+        raise ValueError(f"Invalid stage index: {stage_idx}. Must be 0 or 1.")
 
 
 def load_stage_checkpoint(checkpoint_path: str, model=None) -> Dict[str, Any]:
@@ -276,18 +225,18 @@ def load_stage_checkpoint(checkpoint_path: str, model=None) -> Dict[str, Any]:
                 model.model.sequence_embedding.load_state_dict(checkpoint['sequence_embedding'])
                 
         elif stage == 1:
-            # Load codebook components
-            model.model.codebook.load_state_dict(checkpoint['codebook'])
+            # Load complete model state for stage 1 (joint fine-tuning)
+            if 'model_state_dict' in checkpoint:
+                model.model.load_state_dict(checkpoint['model_state_dict'])
+            elif 'codebook' in checkpoint:
+                # Backwards compatibility: if only codebook is saved
+                model.model.codebook.load_state_dict(checkpoint['codebook'])
             
             # Update loss weights
             loss_weights = checkpoint.get('loss_weights', {})
             model.model.lambda_vq = loss_weights.get('lambda_vq', model.model.lambda_vq)
             model.model.lambda_ent = loss_weights.get('lambda_ent', model.model.lambda_ent)
             model.model.lambda_psc = loss_weights.get('lambda_psc', model.model.lambda_psc)
-            
-        elif stage == 2:
-            # Load complete model
-            model.model.load_state_dict(checkpoint['model_state_dict'])
             
         print(f"✓ Model state loaded from stage {stage} checkpoint")
     
@@ -313,7 +262,7 @@ def create_checkpoint_summary(output_dir: str) -> str:
     }
     
     # Scan for stage checkpoints
-    for stage_idx in range(3):
+    for stage_idx in range(2):  # Only 2 stages now: 0 and 1
         stage_dir = os.path.join(output_dir, f"stage_{stage_idx}")
         stage_files = []
         

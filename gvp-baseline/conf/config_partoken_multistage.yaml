@@ -70,25 +70,14 @@ multistage:
       lambda_vq: 0.0      # No VQ loss in stage 0
       lambda_ent: 0.0     # No entropy loss in stage 0
       lambda_psc: 0.0     # No PSC loss in stage 0
-    
-  # Stage 1: Tokenizer warm-start (frozen backbone, 1-3 epochs)
+      
+  # Stage 1: Joint fine-tuning (full model with K-means init)
   stage1:
-    name: "codebook_warmup"
-    epochs: 3
-    lr: 1e-3
-    freeze_backbone: true
+    name: "joint_finetuning"
+    epochs: 20
+    lr: 5e-5
     kmeans_init: true
     kmeans_batches: 50
-    loss_weights:
-      lambda_vq: 1.0      # Strong VQ loss
-      lambda_ent: 1e-3    # Small entropy regularization
-      lambda_psc: 1e-4    # Very weak PSC coverage loss
-      
-  # Stage 2: Joint fine-tuning (full model)
-  stage2:
-    name: "joint_finetuning"
-    epochs: 15
-    lr: 5e-5
     loss_ramp:
       enabled: true
       ramp_epochs: 5      # Gradually increase VQ weights over 5 epochs

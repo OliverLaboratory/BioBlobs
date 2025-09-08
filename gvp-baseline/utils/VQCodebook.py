@@ -104,8 +104,8 @@ class VQCodebookEMA(nn.Module):
         Returns:
             z_q: Quantized embeddings [B, S, D]
             indices: Code indices per cluster [B, S] (-1 where invalid)
-            vq_loss: Scalar VQ loss (codebook + beta * commitment)
-            info: Dict with 'codebook_loss', 'commitment_loss', 'perplexity', 'usage_probs'
+            vq_loss: Scalar VQ loss (beta * commitment only, no codebook loss)
+            info: Dict with 'commitment_loss', 'perplexity', 'usage_probs'
         """
         B, S, D = z.shape
         if mask is None:
@@ -117,7 +117,6 @@ class VQCodebookEMA(nn.Module):
             # Pass-through if no valid clusters
             idx_full = torch.full((B * S,), -1, dtype=torch.long, device=z.device)
             info = {
-                "codebook_loss": z.new_tensor(0.0),
                 "commitment_loss": z.new_tensor(0.0),
                 "perplexity": self.perplexity(),
                 "usage_probs": self.usage_probs()
@@ -129,10 +128,9 @@ class VQCodebookEMA(nn.Module):
         idx = torch.argmin(dists, dim=1)              # [M]
         e_q = self.embeddings[idx]                    # [M, D]
 
-        # Losses
-        codebook_loss = F.mse_loss(z_valid.detach(), e_q, reduction='mean')
+        # Losses (only commitment loss, no codebook loss)
         commitment_loss = F.mse_loss(z_valid, e_q.detach(), reduction='mean')
-        vq_loss = codebook_loss + self.beta * commitment_loss
+        vq_loss = self.beta * commitment_loss
 
         # Straight-through
         z_q_valid = z_valid + (e_q - z_valid).detach()
@@ -149,7 +147,6 @@ class VQCodebookEMA(nn.Module):
             self._ema_update(z_valid, idx)
 
         info = {
-            "codebook_loss": codebook_loss.detach(),
             "commitment_loss": commitment_loss.detach(),
             "perplexity": self.perplexity().detach(),
             "usage_probs": self.usage_probs().detach(),
@@ -224,6 +221,44 @@ class VQCodebookEMA(nn.Module):
 
         # Graph-level presence via max over clusters
         return p_full.max(dim=1).values                                       # [B, K]
+
+    def differentiable_presence(
+        self, 
+        z: torch.Tensor, 
+        valid_mask: torch.Tensor, 
+        temperature: float = 1.0, 
+        eps: float = 1e-6
+    ) -> torch.Tensor:
+        """
+        Compute differentiable presence probabilities per graph and code.
+        
+        Args:
+            z: Cluster embeddings [B, C, D]
+            valid_mask: Valid cluster mask [B, C] with 1 for real clusters and 0 for paddings
+            temperature: Softmax temperature for soft assignments
+            eps: Numerical stability constant
+            
+        Returns:
+            presence: [B, K] differentiable presence probabilities
+        """
+        # Get codebook embeddings
+        e = self.embeddings  # [K, D] - buffer updated by EMA
+        
+        # Compute squared Euclidean distances
+        # [B,C,1,D] - [1,1,K,D] -> [B,C,K,D] -> sum over D -> [B,C,K]
+        dists = (z.unsqueeze(2) - e.unsqueeze(0).unsqueeze(0)).pow(2).sum(dim=-1)
+        
+        # Soft assignments via softmax
+        logits = -dists / max(temperature, eps)
+        P = logits.softmax(dim=-1)  # [B, C, K]
+        
+        if valid_mask is not None:
+            P = P * valid_mask.unsqueeze(-1)
+        
+        # Clamp for numerical stability, then smooth "OR" across clusters
+        P = P.clamp(eps, 1 - eps)
+        presence = 1.0 - torch.exp(torch.sum(torch.log1p(-P), dim=1))  # [B, K]
+        return presence
 
     @torch.no_grad()
     def kmeans_init(self, samples: torch.Tensor, n_iters: int = 25, tol: float = 1e-4) -> None:
