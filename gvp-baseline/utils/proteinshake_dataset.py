@@ -483,7 +483,7 @@ def print_example_data(data):
 
 
 
-def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None):
+def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None, original_indices=None):
     """
     Convert generator of proteins to list of structures with name, sequence, and coordinates.
     Missing backbone atoms get infinite coordinates and will be filtered by ProteinGraphDataset.
@@ -492,13 +492,16 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         generator: Generator yielding protein data dictionaries
         dataset_name: Name of the dataset for label extraction
         token_map: Pre-computed mapping from labels to integers (optional)
+        original_indices: List of original indices corresponding to the generator items (optional)
 
     Returns:
-        tuple: (structures_list, token_map) where structures_list contains dicts with 'name', 'seq', 'coords', 'label' keys
+        tuple: (structures_list, token_map, filtered_indices) where structures_list contains dicts with 'name', 'seq', 'coords', 'label' keys
+        and filtered_indices contains the original indices of proteins that passed filtering
     """
     structures = []
     labels_set = set()
     temp_data = []
+    filtered_indices = []  # Track which original indices made it through filtering
 
     # Stats
     filtering_stats = {
@@ -527,8 +530,8 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
     # First pass: collect data and labels (only if token_map not provided)
     print("First pass: collecting data and labels...")
-    for protein_data in tqdm(generator, desc="Collecting data"):
-        temp_data.append(protein_data)
+    for i, protein_data in enumerate(tqdm(generator, desc="Collecting data")):
+        temp_data.append((protein_data, original_indices[i] if original_indices else i))
         if token_map is None:
             labels_set.add(_label_key(protein_data["protein"]))
 
@@ -542,7 +545,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
     # Second pass: process the collected data
     print("Second pass: processing structures...")
-    for protein_data in tqdm(temp_data, desc="Converting proteins"):
+    for protein_data, original_idx in tqdm(temp_data, desc="Converting proteins"):
         filtering_stats["total_processed"] += 1
 
         pinfo = protein_data["protein"]
@@ -601,6 +604,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
                 )
 
         filtering_stats["successful"] += 1
+        filtered_indices.append(original_idx)  # Track the original index
 
         # Truncate sequence to match coords length if needed
         adjusted_seq = seq[:len(coords)] if len(seq) > len(coords) else seq
@@ -638,7 +642,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         if len(partial_proteins) > 10:
             print(f"... and {len(partial_proteins) - 10} more")
 
-    return structures, token_map
+    return structures, token_map, filtered_indices
 
 def get_dataset(
     dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data"
@@ -714,6 +718,11 @@ def get_dataset(
     val_json_path = os.path.join(data_dir, f"{dataset_name}_val.json")
     test_json_path = os.path.join(data_dir, f"{dataset_name}_test.json")
     token_map_path = os.path.join(data_dir, f"{dataset_name}_token_map.json")
+    
+    # Paths for filtered indices
+    train_indices_path = os.path.join(data_dir, f"{dataset_name}_train_filtered_indices.json")
+    val_indices_path = os.path.join(data_dir, f"{dataset_name}_val_filtered_indices.json")
+    test_indices_path = os.path.join(data_dir, f"{dataset_name}_test_filtered_indices.json")
 
     if (os.path.exists(train_json_path) and os.path.exists(val_json_path) and
         os.path.exists(test_json_path) and os.path.exists(token_map_path)):
@@ -754,22 +763,22 @@ def get_dataset(
         # First, get token mapping from training data only to ensure consistency
         print("Creating token mapping from training data...")
         train_generator = create_split_generator(all_proteins, train_index)
-        _, token_map = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=None)
+        _, token_map, _ = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=None, original_indices=train_index)
         
         print(f"Token map created with {len(token_map)} classes: {token_map}")
         
         # Now convert each split using the same token mapping
         print("\nConverting training split...")
         train_generator = create_split_generator(all_proteins, train_index)
-        train_structures, _ = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=token_map)
+        train_structures, _, train_filtered_indices = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=token_map, original_indices=train_index)
         
         print("\nConverting validation split...")
         val_generator = create_split_generator(all_proteins, val_index)
-        val_structures, _ = generator_to_structures(val_generator, dataset_name=dataset_name, token_map=token_map)
+        val_structures, _, val_filtered_indices = generator_to_structures(val_generator, dataset_name=dataset_name, token_map=token_map, original_indices=val_index)
         
         print("\nConverting test split...")
         test_generator = create_split_generator(all_proteins, test_index)
-        test_structures, _ = generator_to_structures(test_generator, dataset_name=dataset_name, token_map=token_map)
+        test_structures, _, test_filtered_indices = generator_to_structures(test_generator, dataset_name=dataset_name, token_map=token_map, original_indices=test_index)
         
         # Save all data to separate JSON files
         print("Saving processed data to JSON files...")
@@ -786,10 +795,24 @@ def get_dataset(
         with open(test_json_path, "w") as f:
             json.dump(test_structures, f, indent=2)
             
+        # Save filtered indices
+        with open(train_indices_path, "w") as f:
+            json.dump(train_filtered_indices, f, indent=2)
+            
+        with open(val_indices_path, "w") as f:
+            json.dump(val_filtered_indices, f, indent=2)
+            
+        with open(test_indices_path, "w") as f:
+            json.dump(test_filtered_indices, f, indent=2)
+            
         print(f"Saved {len(train_structures)} train structures to {train_json_path}")
         print(f"Saved {len(val_structures)} val structures to {val_json_path}")
         print(f"Saved {len(test_structures)} test structures to {test_json_path}")
         print(f"Saved token map to {token_map_path}")
+        print(f"Saved filtered indices:")
+        print(f"  Train indices ({len(train_filtered_indices)}) to {train_indices_path}")
+        print(f"  Val indices ({len(val_filtered_indices)}) to {val_indices_path}")
+        print(f"  Test indices ({len(test_filtered_indices)}) to {test_indices_path}")
 
     # Verify that we have the correct number of classes
     all_labels = set()
