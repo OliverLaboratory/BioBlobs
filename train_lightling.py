@@ -83,7 +83,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
         print(f"{'='*60}")
         
         if stage_idx == 0:  # Baseline stage
-            self.print("Starting baseline training stage...")
+            print("Starting baseline training stage...")
             self.bypass_codebook = True
             self.model.unfreeze_all()
             self.current_loss_weights = stage_cfg.loss_weights
@@ -91,7 +91,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
             print("✓ All parameters unfrozen")
             
         elif stage_idx == 1:  # Joint fine-tuning stage 
-            self.print("🔓 Transitioning to joint fine-tuning stage...")
+            print("🔓 Transitioning to joint fine-tuning stage...")
             self.bypass_codebook = False
             self.model.unfreeze_all()
             

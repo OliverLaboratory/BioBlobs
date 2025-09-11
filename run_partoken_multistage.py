@@ -21,7 +21,6 @@ from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 from typing import Dict, Optional, Tuple
 from utils.interpretability import (
-    all_inter_info, 
     print_interpretability_summary,
     save_interpretability_results,
 )
