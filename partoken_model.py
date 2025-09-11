@@ -480,23 +480,27 @@ class ParTokenModel(nn.Module):
         for i, batch_data in enumerate(loader):
             if i >= max_batches:
                 break
-            # Unpack your batch the same way you do in training
-            (hV_s, hV_v), edge_index, (hE_s, hE_v), labels, batch = batch_data
+            
+            # Handle PyTorch Geometric Batch object
             if device is not None:
-                hV_s = hV_s.to(device); hV_v = hV_v.to(device)
-                hE_s = hE_s.to(device); hE_v = hE_v.to(device)
-                edge_index = edge_index.to(device)
-                labels = labels.to(device)
-                batch = batch.to(device)
+                batch_data = batch_data.to(device)
+            
+            # Extract features from the batch
+            h_V = (batch_data.node_s, batch_data.node_v)
+            edge_index = batch_data.edge_index
+            h_E = (batch_data.edge_s, batch_data.edge_v)
+            batch = batch_data.batch
 
-            clusters, mask = self.extract_pre_gcn_clusters((hV_s, hV_v), edge_index, (hE_s, hE_v), batch=batch)
+            clusters, mask = self.extract_pre_gcn_clusters(h_V, edge_index, h_E, batch=batch)
             if mask.any():
                 samples.append(clusters[mask].detach().cpu())
                 n_seen += int(mask.sum().item())
 
         if n_seen == 0:
+            print("Warning: No valid clusters found for K-means initialization")
             return  # nothing to initialize
         samples = torch.cat(samples, dim=0)  # [N, ns]
+        print(f"Initializing codebook with {len(samples)} cluster samples")
         self.codebook.kmeans_init(samples.to(self.codebook.embeddings.device))
 
     def freeze_backbone_for_codebook(self) -> None:

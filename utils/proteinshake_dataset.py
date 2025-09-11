@@ -93,7 +93,7 @@ class BatchSampler(data.Sampler):
 #             dataset.node_counts, max_nodes=max_nodes, shuffle=shuffle
 #         ),
 #     )
-def create_dataloader(dataset, batch_size=128, num_workers=4, shuffle=True):
+def create_dataloader(dataset, batch_size=128, num_workers=0, shuffle=True):
     return DataLoader(
         dataset,
         num_workers=num_workers,
@@ -459,7 +459,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     return structures, token_map, filtered_indices
 
 def get_dataset(
-    dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data"
+    dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
 ):
     """
     Get train, validation, and test datasets for the specified protein classification task.
@@ -472,6 +472,7 @@ def get_dataset(
         split (str): Split method ('random', 'sequence', 'structure')
         split_similarity_threshold (float): Similarity threshold for splitting
         data_dir (str): Directory to store/load data files
+        test_mode (bool): If True, limit datasets to small sizes for testing (100 train, 20 val, 20 test)
 
     Returns:
         tuple: (train_dataset, val_dataset, test_dataset, num_classes)
@@ -629,6 +630,21 @@ def get_dataset(
     
     print(f"Found {len(all_labels)} unique labels in processed data: {sorted(all_labels)}")
     assert len(all_labels) <= num_classes, f"More labels found ({len(all_labels)}) than expected ({num_classes})"
+
+    # Apply test mode limiting if enabled
+    if test_mode:
+        print("\n🧪 TEST MODE ENABLED - Limiting dataset sizes...")
+        original_train_size = len(train_structures)
+        original_val_size = len(val_structures)
+        original_test_size = len(test_structures)
+        
+        train_structures = train_structures[:100]  # Limit to 100 training samples
+        val_structures = val_structures[:20]       # Limit to 20 validation samples  
+        test_structures = test_structures[:20]     # Limit to 20 test samples
+        
+        print(f"  Train: {original_train_size} → {len(train_structures)}")
+        print(f"  Val:   {original_val_size} → {len(val_structures)}")
+        print(f"  Test:  {original_test_size} → {len(test_structures)}")
 
     # Create separate datasets for each split
     train_dataset = ProteinClassificationDataset(

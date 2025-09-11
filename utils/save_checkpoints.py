@@ -11,12 +11,13 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 
-def save_stage0_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
+def save_stage0_checkpoint(trainer, model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
     """
-    Save Stage 0 checkpoint: encoder + partitioner + classifier components.
+    Save Stage 0 checkpoint using PyTorch Lightning's built-in functionality.
     
     Args:
-        model: The ParToken Lightning model
+        trainer: PyTorch Lightning trainer instance
+        model: The ParToken Lightning model  
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata
         
@@ -25,62 +26,30 @@ def save_stage0_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = 
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Extract the core model components needed for stage 0
-    checkpoint_data = {
-        # Node and edge encoders
-        'node_encoder': model.model.node_encoder.state_dict(),
-        'edge_encoder': model.model.edge_encoder.state_dict(),
-        
-        # GVP layers
-        'gvp_layers': [layer.state_dict() for layer in model.model.gvp_layers],
-        
-        # Output projection and partitioner
-        'output_projection': model.model.output_projection.state_dict(),
-        'partitioner': model.model.partitioner.state_dict(),
-        
-        # Classifier components
-        'classifier': model.model.classifier.state_dict(),
-        
-        # Sequence embedding if present
-        'sequence_embedding': model.model.sequence_embedding.state_dict() if hasattr(model.model, 'sequence_embedding') else None,
-        
-        # Model configuration and metadata
-        'model_config': {
-            'node_in_dim': model.model.node_in_dim,
-            'node_h_dim': model.model.node_h_dim,
-            'edge_in_dim': model.model.edge_in_dim,
-            'edge_h_dim': model.model.edge_h_dim,
-            'num_classes': model.model.num_classes,
-            'seq_in': model.model.seq_in,
-            'num_layers': model.model.num_layers,
-            'drop_rate': model.model.drop_rate,
-            'pooling': model.model.pooling,
-        },
-        
-        # Stage metadata
-        'stage_info': {
+    # Add stage metadata to model for inclusion in checkpoint
+    if stage_info:
+        model.stage_metadata = {
             'stage': 0,
-            'stage_name': 'baseline',
+            'stage_name': 'baseline', 
             'timestamp': datetime.now().isoformat(),
-            'components': ['encoder', 'partitioner', 'classifier'],
-            **(stage_info or {})
+            **stage_info
         }
-    }
     
-    checkpoint_path = os.path.join(output_dir, 'stage0_encoder_partitioner_classifier.ckpt')
-    torch.save(checkpoint_data, checkpoint_path)
+    checkpoint_path = os.path.join(output_dir, 'stage0_checkpoint.ckpt')
+    trainer.save_checkpoint(checkpoint_path)
     
     print(f"✓ Stage 0 checkpoint saved: {checkpoint_path}")
-    print(f"  Components: encoder, partitioner, classifier")
+    print(f"  Using PyTorch Lightning's built-in checkpointing")
     
     return checkpoint_path
 
 
-def save_stage1_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
+def save_stage1_checkpoint(trainer, model, output_dir: str, stage_info: Optional[Dict] = None) -> str:
     """
-    Save Stage 1 checkpoint: complete model with codebook (joint fine-tuning).
+    Save Stage 1 checkpoint using PyTorch Lightning's built-in functionality.
     
     Args:
+        trainer: PyTorch Lightning trainer instance
         model: The ParToken Lightning model
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata
@@ -90,87 +59,36 @@ def save_stage1_checkpoint(model, output_dir: str, stage_info: Optional[Dict] = 
     """
     os.makedirs(output_dir, exist_ok=True)
     
-    # Save complete model state for joint fine-tuning
-    checkpoint_data = {
-        # Complete model state dict
-        'model_state_dict': model.model.state_dict(),
-        
-        # Complete model configuration
-        'model_config': {
-            'node_in_dim': model.model.node_in_dim,
-            'node_h_dim': model.model.node_h_dim,
-            'edge_in_dim': model.model.edge_in_dim,
-            'edge_h_dim': model.model.edge_h_dim,
-            'num_classes': model.model.num_classes,
-            'seq_in': model.model.seq_in,
-            'num_layers': model.model.num_layers,
-            'drop_rate': model.model.drop_rate,
-            'pooling': model.model.pooling,
-            # Partitioner config
-            'max_clusters': model.model.max_clusters,
-            'nhid': model.model.nhid,
-            'k_hop': model.model.k_hop,
-            'cluster_size_max': model.model.cluster_size_max,
-            'termination_threshold': model.model.termination_threshold,
-            'tau_init': model.model.tau_init,
-            'tau_min': model.model.tau_min,
-            'tau_decay': model.model.tau_decay,
-            # Codebook config
-            'codebook_size': model.model.codebook_size,
-            'codebook_dim': model.model.codebook_dim,
-            'codebook_beta': model.model.codebook_beta,
-            'codebook_decay': model.model.codebook_decay,
-            'codebook_eps': model.model.codebook_eps,
-            'codebook_distance': model.model.codebook_distance,
-            'codebook_cosine_normalize': model.model.codebook_cosine_normalize,
-            'lambda_vq': model.model.lambda_vq,
-            'lambda_ent': model.model.lambda_ent,
-            'lambda_psc': model.model.lambda_psc,
-            'psc_temp': model.model.psc_temp,
-        },
-        
-        # Training configuration
-        'training_config': {
-            'current_stage': model.current_stage,
-            'total_epochs': model.total_epoch,
-        },
-        
-        # Loss weights at end of stage 1
-        'loss_weights': {
-            'lambda_vq': model.model.lambda_vq,
-            'lambda_ent': model.model.lambda_ent,
-            'lambda_psc': model.model.lambda_psc,
-        },
-        
-        # Stage metadata
-        'stage_info': {
+    # Add stage metadata to model for inclusion in checkpoint
+    if stage_info:
+        model.stage_metadata = {
             'stage': 1,
             'stage_name': 'joint_finetuning',
             'timestamp': datetime.now().isoformat(),
-            'components': ['complete_model_with_codebook'],
-            **(stage_info or {})
+            **stage_info
         }
-    }
     
-    checkpoint_path = os.path.join(output_dir, 'stage1_complete_model.ckpt')
-    torch.save(checkpoint_data, checkpoint_path)
+    checkpoint_path = os.path.join(output_dir, 'stage1_checkpoint.ckpt')
+    trainer.save_checkpoint(checkpoint_path)
     
     print(f"✓ Stage 1 checkpoint saved: {checkpoint_path}")
-    print(f"  Components: complete model with codebook")
+    print("  Using PyTorch Lightning's built-in checkpointing")
     
     return checkpoint_path
 
 
 def save_stage_specific_checkpoint(
+    trainer,
     model, 
     stage_idx: int, 
     output_dir: str, 
     stage_info: Optional[Dict] = None
 ) -> str:
     """
-    Save checkpoint for specific stage using appropriate saving function.
+    Save checkpoint for specific stage using PyTorch Lightning's built-in functionality.
     
     Args:
+        trainer: PyTorch Lightning trainer instance
         model: The ParToken Lightning model
         stage_idx: Stage index (0 or 1)
         output_dir: Directory to save the checkpoint
@@ -180,20 +98,25 @@ def save_stage_specific_checkpoint(
         Path to saved checkpoint file
     """
     if stage_idx == 0:
-        return save_stage0_checkpoint(model, output_dir, stage_info)
+        return save_stage0_checkpoint(trainer, model, output_dir, stage_info)
     elif stage_idx == 1:
-        return save_stage1_checkpoint(model, output_dir, stage_info)
+        return save_stage1_checkpoint(trainer, model, output_dir, stage_info)
     else:
         raise ValueError(f"Invalid stage index: {stage_idx}. Must be 0 or 1.")
 
 
-def load_stage_checkpoint(checkpoint_path: str, model=None) -> Dict[str, Any]:
+def load_stage_checkpoint(checkpoint_path: str):
     """
-    Load a stage-specific checkpoint.
+    Load a PyTorch Lightning checkpoint.
+    
+    Note: With PyTorch Lightning checkpoints, you typically use:
+    - trainer.fit(model, ckpt_path=checkpoint_path) to resume training
+    - Model.load_from_checkpoint(checkpoint_path) to load a trained model
+    
+    This function is kept for backward compatibility and inspection purposes.
     
     Args:
         checkpoint_path: Path to the checkpoint file
-        model: Optional model to load state into
         
     Returns:
         Dictionary containing checkpoint data
@@ -201,44 +124,23 @@ def load_stage_checkpoint(checkpoint_path: str, model=None) -> Dict[str, Any]:
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
+    print(f"📂 Loading PyTorch Lightning checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    stage_info = checkpoint.get('stage_info', {})
-    stage = stage_info.get('stage', 'unknown')
     
-    print(f"📂 Loading checkpoint from stage {stage}: {checkpoint_path}")
-    print(f"   Components: {', '.join(stage_info.get('components', ['unknown']))}")
+    # Print basic checkpoint info
+    if 'epoch' in checkpoint:
+        print(f"   Epoch: {checkpoint['epoch']}")
+    if 'global_step' in checkpoint:
+        print(f"   Global Step: {checkpoint['global_step']}")
+    if 'stage_metadata' in checkpoint.get('state_dict', {}):
+        stage_info = checkpoint['state_dict']['stage_metadata']
+        print(f"   Stage: {stage_info.get('stage', 'unknown')}")
+        print(f"   Stage Name: {stage_info.get('stage_name', 'unknown')}")
     
-    if model is not None:
-        if stage == 0:
-            # Load stage 0 components
-            model.model.node_encoder.load_state_dict(checkpoint['node_encoder'])
-            model.model.edge_encoder.load_state_dict(checkpoint['edge_encoder'])
-            
-            for i, layer_state in enumerate(checkpoint['gvp_layers']):
-                model.model.gvp_layers[i].load_state_dict(layer_state)
-            
-            model.model.output_projection.load_state_dict(checkpoint['output_projection'])
-            model.model.partitioner.load_state_dict(checkpoint['partitioner'])
-            model.model.classifier.load_state_dict(checkpoint['classifier'])
-            
-            if checkpoint['sequence_embedding'] is not None and hasattr(model.model, 'sequence_embedding'):
-                model.model.sequence_embedding.load_state_dict(checkpoint['sequence_embedding'])
-                
-        elif stage == 1:
-            # Load complete model state for stage 1 (joint fine-tuning)
-            if 'model_state_dict' in checkpoint:
-                model.model.load_state_dict(checkpoint['model_state_dict'])
-            elif 'codebook' in checkpoint:
-                # Backwards compatibility: if only codebook is saved
-                model.model.codebook.load_state_dict(checkpoint['codebook'])
-            
-            # Update loss weights
-            loss_weights = checkpoint.get('loss_weights', {})
-            model.model.lambda_vq = loss_weights.get('lambda_vq', model.model.lambda_vq)
-            model.model.lambda_ent = loss_weights.get('lambda_ent', model.model.lambda_ent)
-            model.model.lambda_psc = loss_weights.get('lambda_psc', model.model.lambda_psc)
-            
-        print(f"✓ Model state loaded from stage {stage} checkpoint")
+    print("✓ Checkpoint loaded successfully")
+    print("💡 To use this checkpoint:")
+    print("   - Resume training: trainer.fit(model, ckpt_path=checkpoint_path)")
+    print("   - Load trained model: Model.load_from_checkpoint(checkpoint_path)")
     
     return checkpoint
 

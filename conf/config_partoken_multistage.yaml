@@ -8,6 +8,7 @@ data:
   split: structure
   split_similarity_threshold: 0.7
   data_dir: C:\Users\33433\OneDrive - Yale University\ParToken\partoken-protein\data
+  test_mode: true  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 model:
   node_in_dim: [6, 3]
@@ -43,14 +44,14 @@ model:
 
 train:
   batch_size: 16
-  num_workers: 8
+  num_workers: 0
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
   wandb_project: partoken-multistage
   # Cosine learning rate schedule with warmup
   use_cosine_schedule: true
-  warmup_epochs: 5
+  warmup_epochs: 1
 
 # Multi-stage training configuration
 multistage:
@@ -63,7 +64,7 @@ multistage:
   # Stage 0: Baseline (encoder + partitioner only)
   stage0:
     name: "baseline"
-    epochs: 20
+    epochs: 1
     lr: 1e-4
     bypass_codebook: true
     loss_weights:
@@ -74,7 +75,7 @@ multistage:
   # Stage 1: Joint fine-tuning (full model with K-means init)
   stage1:
     name: "joint_finetuning"
-    epochs: 20
+    epochs: 2
     lr: 5e-5
     kmeans_init: true
     kmeans_batches: 50
@@ -91,4 +92,4 @@ multistage:
         lambda_psc: 1e-2
     freeze_codebook_final:
       enabled: true
-      epochs: 3           # Freeze codebook for last 3 epochs
+      epochs: 1           # Freeze codebook for last 3 epochs

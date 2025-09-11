@@ -52,6 +52,7 @@ def main(cfg: DictConfig):
         split=cfg.data.split,
         split_similarity_threshold=cfg.data.split_similarity_threshold,
         data_dir=cfg.data.data_dir,
+        test_mode=cfg.data.get('test_mode', False),  # Add test_mode parameter
     )
     
     train_loader = create_dataloader(train_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=True)
@@ -143,6 +144,7 @@ def main(cfg: DictConfig):
         }
         
         component_checkpoint_path = save_stage_specific_checkpoint(
+            trainer,  # Add trainer parameter
             model, 
             stage_idx, 
             stage_output_dir, 
