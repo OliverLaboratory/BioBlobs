@@ -7,7 +7,7 @@ from gvp.models import GVP, GVPConvLayer, LayerNorm
 from typing import Tuple, Optional
 import numpy as np
 from utils.VQCodebook import VQCodebookEMA
-from utils.inter_cluster import InterClusterModel
+from utils.inter_cluster import GlobalClusterAttention, FeatureWiseGateFusion
 from utils.pnc_partition import Partitioner
 
 
@@ -112,8 +112,9 @@ class ParTokenModel(nn.Module):
         self.partitioner.tau_min = tau_min
         self.partitioner.tau_decay = tau_decay
         
-        # Inter-cluster message passing
-        self.cluster_gcn = InterClusterModel(ns, ns, drop_rate)
+        # Global-to-cluster attention and feature-wise gating
+        self.global_cluster_attn = GlobalClusterAttention(dim=ns, heads=4, drop_rate=drop_rate, temperature=1.0)
+        self.fw_gate = FeatureWiseGateFusion(dim=ns, hidden=ns // 2, drop_rate=drop_rate)
 
         self.codebook = VQCodebookEMA(
             codebook_size=codebook_size,
@@ -141,9 +142,9 @@ class ParTokenModel(nn.Module):
             nn.Linear(ns // 2, 1)
         )
         
-        # Classification head
+        # Classification head (updated for fused input dimension)
         self.classifier = nn.Sequential(
-            nn.Linear(2 * ns, 4 * ns), 
+            nn.Linear(ns, 4 * ns), 
             nn.ReLU(inplace=True),
             nn.Dropout(drop_rate),
             nn.Linear(4 * ns, 2 * ns),
@@ -508,7 +509,7 @@ class ParTokenModel(nn.Module):
         Freeze encoder, partitioner, and classifier so only the codebook trains.
         """
         for m in [self.node_encoder, self.edge_encoder, *self.gvp_layers, self.output_projection,
-                  self.partitioner, self.cluster_gcn, self.cluster_attention, self.classifier]:
+                  self.partitioner, self.global_cluster_attn, self.fw_gate, self.cluster_attention, self.classifier]:
             for p in m.parameters():
                 p.requires_grad = False
         for p in self.codebook.parameters():
@@ -519,7 +520,7 @@ class ParTokenModel(nn.Module):
         Unfreeze all model parameters (joint fine-tuning).
         """
         for m in [self.node_encoder, self.edge_encoder, *self.gvp_layers, self.output_projection,
-                  self.partitioner, self.cluster_gcn, self.cluster_attention, self.classifier, self.codebook]:
+                  self.partitioner, self.global_cluster_attn, self.fw_gate, self.cluster_attention, self.classifier, self.codebook]:
             for p in m.parameters():
                 p.requires_grad = True
 
@@ -587,26 +588,28 @@ class ParTokenModel(nn.Module):
             cluster_features, mask=cluster_valid_mask
         )
 
-        # Inter-cluster message passing
-        # Choose between quantized or original clusters for classification
-        if getattr(self, 'use_quantized_for_classification', True):
-            # Use quantized clusters (default behavior)
-            refined_clusters = self.cluster_gcn(quant_clusters, cluster_adj)  # [B, S, ns]
-        else:
-            # Use original clusters for classification, quantized for regularization only
-            refined_clusters = self.cluster_gcn(cluster_features, cluster_adj)  # [B, S, ns]
-        
-        # Attention-weighted pooling with importance scores
-        cluster_pooled, cluster_importance = self._attention_weighted_pooling(
-            refined_clusters, cluster_valid_mask
-        )  # [B, ns], [B, S]
+        # Global residue pooling for attention query
         residue_pooled = self._pool_nodes(node_features, batch)  # [B, ns]
         
-        # Combine representations
-        combined_features = torch.cat([residue_pooled, cluster_pooled], dim=-1)
+        # Choose between quantized or original clusters for global attention
+        if getattr(self, 'use_quantized_for_classification', True):
+            # Use quantized clusters (default behavior)
+            C = quant_clusters  # [B, S, ns]
+        else:
+            # Use original clusters for classification, quantized for regularization only
+            C = cluster_features  # [B, S, ns]
+        
+        # Global-to-cluster attention
+        c_star, cluster_importance, _ = self.global_cluster_attn(residue_pooled, C, cluster_valid_mask)  # [B, ns], [B, S]
+        
+        # Feature-wise gated fusion 
+        fused_cluster, _beta = self.fw_gate(residue_pooled, c_star)  # [B, ns]
+        
+        # Use fused representation directly (already contains global + cluster info)
+        # combined_features = torch.cat([residue_pooled, fused_cluster], dim=-1)  # [B, 2*ns]
 
-        # Classification
-        logits = self.classifier(combined_features)
+        # Classification using fused representation
+        logits = self.classifier(fused_cluster)  # [B, ns] -> [B, num_classes]
         
         # Use differentiable presence (no torch.no_grad())
         p_gk = self.codebook.differentiable_presence(

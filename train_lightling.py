@@ -195,22 +195,17 @@ class MultiStageParTokenLightning(pl.LightningModule):
         cluster_features, cluster_adj, assignment_matrix = self.model.partitioner(dense_x, dense_adj, mask)
         cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
         
-        # Inter-cluster message passing on original cluster features
-        refined_clusters = self.model.cluster_gcn(cluster_features, cluster_adj)
-        
-        # Use attention-weighted pooling if available, otherwise fall back to masked mean
-        if hasattr(self.model, '_attention_weighted_pooling'):
-            cluster_pooled, _ = self.model._attention_weighted_pooling(refined_clusters, cluster_valid_mask)
-        else:
-            cluster_pooled = self.model._masked_mean(refined_clusters, cluster_valid_mask)
-        
+        # Global residue pooling for attention query
         residue_pooled = self.model._pool_nodes(node_features, batch)
         
-        # Combine representations
-        combined_features = torch.cat([residue_pooled, cluster_pooled], dim=-1)
+        # Global-to-cluster attention (bypass mode uses original cluster features)
+        c_star, cluster_importance, _ = self.model.global_cluster_attn(residue_pooled, cluster_features, cluster_valid_mask)
         
-        # Classification
-        logits = self.model.classifier(combined_features)
+        # Feature-wise gated fusion
+        fused_cluster, _beta = self.model.fw_gate(residue_pooled, c_star)
+        
+        # Classification using fused representation
+        logits = self.model.classifier(fused_cluster)
         
         # Create dummy extra dict for compatibility  
         extra = {
