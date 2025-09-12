@@ -64,6 +64,7 @@ class ParTokenModel(nn.Module):
         lambda_vq: float = 1.0,
         lambda_ent: float = 0.0,    # Not used in loss (kept for backward compatibility)
         lambda_psc: float = 1e-2,
+        lambda_card: float = 0.005,  # Cardinality loss weight
         psc_temp: float = 0.3
     ):
         super().__init__()
@@ -106,7 +107,8 @@ class ParTokenModel(nn.Module):
             nhid=nhid,
             k_hop=k_hop,
             cluster_size_max=cluster_size_max,
-            termination_threshold=termination_threshold
+            termination_threshold=termination_threshold,
+            lambda_card=lambda_card
         )
         self.partitioner.tau_init = tau_init
         self.partitioner.tau_min = tau_min
@@ -129,6 +131,7 @@ class ParTokenModel(nn.Module):
         self.lambda_vq = lambda_vq
         self.lambda_ent = lambda_ent
         self.lambda_psc = lambda_psc
+        self.lambda_card = lambda_card
         self.psc_temp = psc_temp
         
         # Use original cluster embeddings for classification (not quantized)
@@ -223,7 +226,7 @@ class ParTokenModel(nn.Module):
         extra: dict
     ) -> Tuple[torch.Tensor, dict]:
         """
-        Compute total loss combining classification, VQ, and coverage components.
+        Compute total loss combining classification, VQ, coverage, and cardinality components.
 
         Args:
             logits: Classification logits [B, num_classes]
@@ -245,8 +248,11 @@ class ParTokenModel(nn.Module):
         coverage = 1.0 - torch.prod(1.0 - p_gk, dim=-1)    # [B]
         L_psc = -coverage.mean()
 
-        # Total loss without entropy term
-        total = L_cls + self.lambda_vq * L_vq + self.lambda_psc * L_psc
+        # Cardinality loss from partitioner
+        L_card = self.partitioner.get_cardinality_loss()
+
+        # Total loss with cardinality term
+        total = L_cls + self.lambda_vq * L_vq + self.lambda_psc * L_psc + self.lambda_card * L_card
 
         # Compute entropy for monitoring only (not in loss)
         L_ent = self.codebook.entropy_loss(weight=1.0)
@@ -256,6 +262,7 @@ class ParTokenModel(nn.Module):
             "loss/cls": float(L_cls.detach().cpu()),
             "loss/vq_commit": float(L_vq.detach().cpu()),
             "loss/psc": float(L_psc.detach().cpu()),
+            "loss/cardinality": float(L_card.detach().cpu()),
             "metric/entropy": float(L_ent.detach().cpu()),  # monitoring only
             "metric/perplexity": float(extra["vq_info"]["perplexity"].detach().cpu()),
             "codebook/commitment_loss": float(extra["vq_info"]["commitment_loss"].detach().cpu()),
@@ -647,7 +654,8 @@ def create_optimized_model():
         drop_rate=0.1,              # Dropout rate
         pooling='mean',             # Pooling strategy
         max_clusters=5,             # Maximum number of clusters
-        termination_threshold=0.95  # Stop when 95% of residues are assigned
+        termination_threshold=0.95, # Stop when 95% of residues are assigned
+        lambda_card=0.005           # Cardinality loss weight
     )
     
     print("Optimized model initialized")
