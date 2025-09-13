@@ -5,21 +5,12 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from tqdm import tqdm
-import json
-import argparse
-import math
 from utils.proteinshake_dataset import get_dataset, create_dataloader
-from partoken_model import ParTokenModel
 from utils.utils import set_seed
-from utils.lr_schedule import get_cosine_schedule_with_warmup
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
-from typing import Dict, Optional, Tuple
 from utils.interpretability import (
     print_interpretability_summary,
     save_interpretability_results,
@@ -28,7 +19,6 @@ from utils.save_checkpoints import (
     save_stage_specific_checkpoint,
     create_checkpoint_summary
 )
-from utils.loss_schedulers import LossWeightScheduler
 from train_lightling import MultiStageParTokenLightning
 
 @hydra.main(version_base="1.1", config_path='conf', config_name='config_partoken_multistage')
@@ -208,7 +198,7 @@ def main(cfg: DictConfig):
     # Create checkpoint summary
     summary_path = create_checkpoint_summary(custom_output_dir)
     
-    print(f"\n🎉 MULTI-STAGE TRAINING COMPLETED!")
+    print("\n🎉 MULTI-STAGE TRAINING COMPLETED!")
     print(f"📁 Final model saved to: {final_model_path}")
     print(f"📋 Checkpoint summary: {summary_path}")
     print(f"📊 Final test accuracy: {test_results[0]['test_acc']:.4f}")

@@ -5,8 +5,7 @@ from partoken_model import ParTokenModel
 from utils.lr_schedule import get_cosine_schedule_with_warmup
 import torch
 import torch.nn as nn
-from pytorch_lightning.callbacks import ModelCheckpoint
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from utils.interpretability import (
     dataset_inter_results, 
 )

@@ -8,7 +8,7 @@ data:
   split: structure
   split_similarity_threshold: 0.7
   data_dir: C:\Users\33433\OneDrive - Yale University\ParToken\partoken-protein\data
-  test_mode: true  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  test_mode: False  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 model:
   node_in_dim: [6, 3]
@@ -45,7 +45,7 @@ model:
 
 train:
   batch_size: 16
-  num_workers: 0
+  num_workers: 4
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
@@ -65,7 +65,7 @@ multistage:
   # Stage 0: Baseline (encoder + partitioner only)
   stage0:
     name: "baseline"
-    epochs: 10
+    epochs: 1
     lr: 1e-4
     bypass_codebook: true
     loss_weights:
@@ -77,7 +77,7 @@ multistage:
   # Stage 1: Joint fine-tuning (full model with K-means init)
   stage1:
     name: "joint_finetuning"
-    epochs: 5
+    epochs: 2
     lr: 5e-5
     kmeans_init: true
     kmeans_batches: 50
