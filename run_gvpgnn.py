@@ -5,9 +5,6 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from tqdm import tqdm
-import json
-import argparse
 from utils.proteinshake_dataset import get_dataset, create_dataloader
 from baseline_model import BaselineGVPModel
 from utils.utils import set_seed
