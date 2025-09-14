@@ -8,10 +8,10 @@ from pytorch_lightning.loggers import WandbLogger
 from utils.proteinshake_dataset import get_dataset, create_dataloader
 from baseline_model import BaselineGVPModel
 from utils.utils import set_seed
+from utils.checkpoint_testing import test_checkpoints_and_save_results
 import torch
 import torch.nn as nn
 import wandb
-from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 
@@ -90,21 +90,15 @@ class GVPBaseline(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         return optimizer
 
-@hydra.main(version_base="1.1", config_path='conf', config_name='config')
+@hydra.main(version_base="1.1", config_path='conf', config_name='gvp_gnn_a6000')
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     set_seed(cfg.train.seed)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-
-    # Custom output directory: ./outputs/wandb_project/dataset_name/timestamp
-    custom_output_dir = os.path.join(
-        "./outputs",
-        cfg.train.wandb_project,
-        cfg.data.dataset_name,
-        timestamp
-    )
-    os.makedirs(custom_output_dir, exist_ok=True)
+    # Use Hydra's output directory to ensure consistency
+    from hydra.core.hydra_config import HydraConfig
+    hydra_cfg = HydraConfig.get()
+    custom_output_dir = hydra_cfg.runtime.output_dir
     
     print(f"Output directory: {custom_output_dir}")
 
@@ -119,6 +113,7 @@ def main(cfg: DictConfig):
     train_loader = create_dataloader(train_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=True)
     val_loader = create_dataloader(val_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False)
     test_loader = create_dataloader(test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False)
+
 
     # Model
     model = GVPBaseline(cfg.model, cfg.train, num_classes)
@@ -154,22 +149,19 @@ def main(cfg: DictConfig):
 
     trainer.fit(model, train_loader, val_loader)
     
-    print("\n" + "=" * 55)
-    print("TESTING")
-    print("=" * 55)
-    
-    trainer.test(model, test_loader)
+    # Test both checkpoints and save results using utility function
+    test_checkpoints_and_save_results(
+        trainer=trainer,
+        model=model,
+        test_loader=test_loader,
+        checkpoint_callback=checkpoint_callback,
+        output_dir=custom_output_dir,
+        cfg=cfg,
+        model_class=GVPBaseline,
+        wandb_logger=wandb_logger
+    )
 
-    # Save best model and summary manually (original functionality)
     if wandb_logger is not None:
-        # Save model checkpoint
-        best_model_path = os.path.join(custom_output_dir, 'best_model.pt')
-        trainer.save_checkpoint(best_model_path)
-        wandb_logger.experiment.save(best_model_path)
-        # Log summary
-        wandb_logger.experiment.log({
-            "best_model_path": best_model_path
-        })
         wandb.finish()
 
 if __name__ == "__main__":

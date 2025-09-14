@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_scatter import scatter_mean, scatter_sum, scatter_max
-import gvp
-import gvp.data
 from gvp.models import GVP, GVPConvLayer, LayerNorm
 
 
@@ -269,7 +267,7 @@ def test_baseline_gvp_model():
         print(f"Graph 2 probabilities: {batch_probabilities[1]}")
         
     # Test 4: Model with sequence input
-    print(f"\n=== Test 4: Model with Sequence Input ===")
+    print("\n=== Test 4: Model with Sequence Input ===")
     
     model_with_seq = BaselineGVPModel(
         node_in_dim=node_in_dim,
@@ -294,7 +292,7 @@ def test_baseline_gvp_model():
     print(f"Sequence input: {seq}")
     
     # Test 5: Model parameter count
-    print(f"\n=== Test 5: Model Information ===")
+    print("\n=== Test 5: Model Information ===")
     
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -304,7 +302,7 @@ def test_baseline_gvp_model():
     print(f"Model size: {total_params * 4 / 1024 / 1024:.2f} MB (float32)")
     
     # Test 6: Gradient flow
-    print(f"\n=== Test 6: Gradient Flow Test ===")
+    print("\n=== Test 6: Gradient Flow Test ===")
     
     model.train()
     logits = model(h_V, edge_index, h_E)

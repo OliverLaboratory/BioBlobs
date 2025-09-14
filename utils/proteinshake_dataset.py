@@ -39,60 +39,7 @@ def _rbf(D, D_min=0.0, D_max=20.0, D_count=16, device="cpu"):
     return RBF
 
 
-class BatchSampler(data.Sampler):
-    """
-    From https://github.com/jingraham/neurips19-graph-protein-design.
 
-    A `torch.utils.data.Sampler` which samples batches according to a
-    maximum number of graph nodes.
-
-    :param node_counts: array of node counts in the dataset to sample from
-    :param max_nodes: the maximum number of nodes in any batch,
-                      including batches of a single element
-    :param shuffle: if `True`, batches in shuffled order
-    """
-
-    def __init__(self, node_counts, max_nodes=3000, shuffle=True):
-        self.node_counts = node_counts
-        self.idx = [i for i in range(len(node_counts)) if node_counts[i] <= max_nodes]
-        self.shuffle = shuffle
-        self.max_nodes = max_nodes
-        self._form_batches()
-
-    def _form_batches(self):
-        self.batches = []
-        if self.shuffle:
-            random.shuffle(self.idx)
-        idx = self.idx
-        while idx:
-            batch = []
-            n_nodes = 0
-            while idx and n_nodes + self.node_counts[idx[0]] <= self.max_nodes:
-                next_idx, idx = idx[0], idx[1:]
-                n_nodes += self.node_counts[next_idx]
-                batch.append(next_idx)
-            self.batches.append(batch)
-
-    def __len__(self):
-        if not self.batches:
-            self._form_batches()
-        return len(self.batches)
-
-    def __iter__(self):
-        if not self.batches:
-            self._form_batches()
-        for batch in self.batches:
-            yield batch
-
-
-# def create_dataloader(dataset, max_nodes=3000, num_workers=4, shuffle=True):
-#     return DataLoader(
-#         dataset,
-#         num_workers=num_workers,
-#         batch_sampler=BatchSampler(
-#             dataset.node_counts, max_nodes=max_nodes, shuffle=shuffle
-#         ),
-#     )
 def create_dataloader(dataset, batch_size=128, num_workers=0, shuffle=True):
     return DataLoader(
         dataset,
@@ -401,6 +348,11 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
         total_residues = len(residues)
         completion_rate = complete_residues / total_residues if total_residues else 0.0
+        
+        # Filter out proteins with completion rate < 0.5
+        if completion_rate < 0.5:
+            continue
+            
         if completion_rate < 1.0:
             filtering_stats["partial_residues"] += 1
             partial_proteins.append(
