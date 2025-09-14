@@ -5,12 +5,10 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from tqdm import tqdm
-import json
-import argparse
 from utils.proteinshake_dataset import get_dataset, create_dataloader
 from diffpool_part import GVPDiffPoolGraphSAGEModel  # Import the new model
 from utils.utils import set_seed
+from utils.checkpoint_testing import test_checkpoints_and_save_results
 import torch
 import torch.nn as nn
 import wandb
@@ -23,7 +21,7 @@ torch.set_float32_matmul_precision('medium')
 class GVPDiffPool(pl.LightningModule):
     def __init__(self, model_cfg, train_cfg, num_classes):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(logger=False)
         self.model = GVPDiffPoolGraphSAGEModel(
             node_in_dim=model_cfg.node_in_dim,
             node_h_dim=model_cfg.node_h_dim,
@@ -202,22 +200,19 @@ def main(cfg: DictConfig):
 
     trainer.fit(model, train_loader, val_loader)
     
-    print("\n" + "=" * 75)
-    print("TESTING")
-    print("=" * 75)
-    
-    trainer.test(model, test_loader)
+    # Test both checkpoints and save results using utility function
+    test_checkpoints_and_save_results(
+        trainer=trainer,
+        model=model,
+        test_loader=test_loader,
+        checkpoint_callback=checkpoint_callback,
+        output_dir=custom_output_dir,
+        cfg=cfg,
+        model_class=GVPDiffPool,
+        wandb_logger=wandb_logger
+    )
 
-    # Save best model and summary manually (original functionality)
     if wandb_logger is not None:
-        # Save model checkpoint
-        best_model_path = os.path.join(custom_output_dir, 'best_model.pt')
-        trainer.save_checkpoint(best_model_path)
-        wandb_logger.experiment.save(best_model_path)
-        # Log summary
-        wandb_logger.experiment.log({
-            "best_model_path": best_model_path
-        })
         wandb.finish()
 
 if __name__ == "__main__":
