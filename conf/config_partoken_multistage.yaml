@@ -1,14 +1,14 @@
 hydra:
   run:
-    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/multistage_${now:%Y-%m-%d}
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/multistage_${now:%Y-%m-%d-%H-%M-%S}
   output_subdir: null
 
-data:
+data: 
   dataset_name: enzymecommission
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: C:\Users\33433\OneDrive - Yale University\ParToken\partoken-protein\data
-  test_mode: False  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  data_dir: /root/ICLR2026/partoken-protein/data
+  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 model:
   node_in_dim: [6, 3]
@@ -44,8 +44,8 @@ model:
   psc_temp: 0.3
 
 train:
-  batch_size: 16
-  num_workers: 4
+  batch_size: 64
+  num_workers: 8
   seed: 42
   models_dir: ./saved_models
   use_wandb: false

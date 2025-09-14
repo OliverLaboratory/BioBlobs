@@ -463,7 +463,7 @@ class ParTokenModel(nn.Module):
         dense_x, mask = to_dense_batch(node_features, batch)  # [B, max_N, ns], [B, max_N]
         dense_adj = to_dense_adj(edge_index, batch)           # [B, max_N, max_N]
 
-        cluster_features, _, assignment_matrix = self.partitioner(dense_x, dense_adj, mask)
+        cluster_features, assignment_matrix = self.partitioner(dense_x, dense_adj, mask)
         cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
         return cluster_features, cluster_valid_mask
 
@@ -583,7 +583,7 @@ class ParTokenModel(nn.Module):
         dense_adj = to_dense_adj(edge_index, batch)  # [B, max_N, max_N]
         
         # Apply partitioner
-        cluster_features, cluster_adj, assignment_matrix = self.partitioner(
+        cluster_features, assignment_matrix = self.partitioner(
             dense_x, dense_adj, mask
         )
 
