@@ -1,8 +1,8 @@
 import json
 import numpy as np
-import random
 from tqdm import tqdm
-import torch, math
+import torch
+import math
 import torch.utils.data as data
 import torch.nn.functional as F
 import torch_geometric
@@ -11,7 +11,26 @@ from torch_geometric.loader import DataLoader
 import os
 from collections import defaultdict
 from math import inf
-from typing import Dict, Iterable, List
+
+def _get_label_key(pinfo, dataset_name):
+    """
+    Extract the appropriate label key from protein info based on dataset type.
+    
+    Args:
+        pinfo: Protein information dictionary
+        dataset_name: Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
+    
+    Returns:
+        str: The label key for the protein
+    """
+    if dataset_name == "enzymecommission":
+        return pinfo["EC"].split(".")[0]
+    elif dataset_name == "proteinfamily":
+        return pinfo["Pfam"][0]
+    elif dataset_name == "scope":
+        return pinfo["SCOP_class"]
+    else:
+        raise ValueError(f"Unknown dataset_name: {dataset_name}")
 
 def _normalize(tensor, dim=-1):
     """
@@ -134,9 +153,19 @@ class ProteinClassificationDataset(data.Dataset):
                 dtype=torch.long,
             )
 
+            # assert len(seq) == coords.shape[0], (len(seq), coords.shape[0])
+            # if len(seq) == coords.shape[0]:
+            #     print(f"Processing protein {name} with {len(seq)} residues")
+            # else:
+            #     raise ValueError(f"Sequence length {len(seq)} does not match coordinates length {coords.shape[0]} for protein {name}")
+
             # Create mask for valid residues (finite coordinates)
             mask = torch.isfinite(coords.sum(dim=(1, 2)))
             coords[~mask] = np.inf
+            
+            # Filter sequence to match valid coordinates
+            # This ensures seq length matches the number of valid residues
+            # seq = seq[mask]
 
             X_ca = coords[:, 1]  # CA coordinates
             edge_index = torch_cluster.knn_graph(X_ca, k=self.top_k)
@@ -278,23 +307,12 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     BACKBONE_SET = set(BACKBONE)
     MISSING = [inf, inf, inf]
 
-    # Label key selector
-    def _label_key(pinfo):
-        if dataset_name == "enzymecommission":
-            return pinfo["EC"].split(".")[0]
-        elif dataset_name == "proteinfamily":
-            return pinfo["Pfam"][0]
-        elif dataset_name == "scope":
-            return pinfo["SCOP_class"]
-        else:
-            raise ValueError(f"Unknown dataset_name: {dataset_name}")
-
     # First pass: collect data and labels (only if token_map not provided)
     print("First pass: collecting data and labels...")
     for i, protein_data in enumerate(tqdm(generator, desc="Collecting data")):
         temp_data.append((protein_data, original_indices[i] if original_indices else i))
         if token_map is None:
-            labels_set.add(_label_key(protein_data["protein"]))
+            labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
 
     # Create label mapping if not provided
     if token_map is None:
@@ -315,7 +333,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         name = pinfo["ID"]
         seq = pinfo["sequence"]
 
-        label_key = _label_key(pinfo)
+        label_key = _get_label_key(pinfo, dataset_name)
         if label_key not in token_map:
             print(f"Warning: Label {label_key} not found in token_map for protein {name}")
             continue
@@ -526,12 +544,20 @@ def get_dataset(
             for idx in indices:
                 if idx < len(protein_list):
                     yield protein_list[idx]
+        
+        # Build token_map from all proteins to ensure all labels are included
+        print("\nBuilding token map from all proteins...")
+        labels_set = set()
+        for protein_data in tqdm(all_proteins, desc="Collecting all labels"):
+            labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
+        sorted_labels = sorted(labels_set)
+        token_map = {label: i for i, label in enumerate(sorted_labels)}
+        print(f"Token map created with {len(token_map)} classes: {token_map}")
                 
         # Now convert each split using the same token mapping
         print("\nConverting training split...")
         train_generator = create_split_generator(all_proteins, train_index)
-        train_structures, token_map, train_filtered_indices = generator_to_structures(train_generator, dataset_name=dataset_name, original_indices=list(train_index))
-        print(f"Token map created with {len(token_map)} classes: {token_map}")
+        train_structures, _, train_filtered_indices = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=token_map, original_indices=list(train_index))
 
         print("\nConverting validation split...")
         val_generator = create_split_generator(all_proteins, val_index)
@@ -570,7 +596,7 @@ def get_dataset(
         print(f"Saved {len(val_structures)} val structures to {val_json_path}")
         print(f"Saved {len(test_structures)} test structures to {test_json_path}")
         print(f"Saved token map to {token_map_path}")
-        print(f"Saved filtered indices:")
+        print("Saved filtered indices:")
         print(f"  Train indices ({len(train_filtered_indices)}) to {train_indices_path}")
         print(f"  Val indices ({len(val_filtered_indices)}) to {val_indices_path}")
         print(f"  Test indices ({len(test_filtered_indices)}) to {test_indices_path}")

@@ -18,7 +18,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 class GVPBaseline(pl.LightningModule):
     def __init__(self, model_cfg, train_cfg, num_classes):
         super().__init__()
-        self.save_hyperparameters()
+        # Save hyperparameters but don't log them to wandb
+        self.save_hyperparameters(logger=False)
         self.model = BaselineGVPModel(
             node_in_dim=model_cfg.node_in_dim,
             node_h_dim=model_cfg.node_h_dim,
@@ -118,8 +119,12 @@ def main(cfg: DictConfig):
     # Model
     model = GVPBaseline(cfg.model, cfg.train, num_classes)
 
-    # Logger
-    wandb_logger = WandbLogger(project=cfg.train.wandb_project) if cfg.train.use_wandb else None
+    # Logger with custom run name
+    run_name = f"{cfg.data.dataset_name}_{cfg.data.split}"
+    wandb_logger = WandbLogger(
+        project=cfg.train.wandb_project, 
+        name=run_name
+    ) if cfg.train.use_wandb else None
 
     # Checkpoint callback
     checkpoint_callback = ModelCheckpoint(
