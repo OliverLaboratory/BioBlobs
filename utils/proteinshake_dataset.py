@@ -28,7 +28,7 @@ def _get_label_key(pinfo, dataset_name):
     elif dataset_name == "proteinfamily":
         return pinfo["Pfam"][0]
     elif dataset_name == "scope":
-        return pinfo["SCOP_class"]
+        return pinfo["SCOP-SF"]
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
 
