@@ -334,12 +334,13 @@ class Partitioner(nn.Module):
         x: torch.Tensor,    # [B, N, D]
         adj: torch.Tensor,  # [B, N, N] (dense; sparse is tolerated in the expander)
         mask: torch.Tensor  # [B, N] bool
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Run partitioning and return cluster features and assignments.
+        Run partitioning and return cluster features, cluster adjacency, and assignments.
 
         Returns:
             cluster_features: [B, S, D]
+            cluster_adj: [B, S, S]
             assignment_matrix: [B, N, S]
         """
         B, N, D = x.shape
@@ -504,10 +505,12 @@ class Partitioner(nn.Module):
             cluster_embeddings = [cluster_embedding]
             assignment_matrix[:, :, 0] = mask.float()
 
-        # Stack cluster features
+        # Stack cluster features and build a simple fully-connected cluster graph
         cluster_features = torch.stack(cluster_embeddings, dim=1)                      # [B, S, D]
+        S = cluster_features.size(1)
+        cluster_adj = torch.ones(B, S, S, device=device) - torch.eye(S, device=device).unsqueeze(0)
 
-        return cluster_features, assignment_matrix
+        return cluster_features, cluster_adj, assignment_matrix
 
     def get_cardinality_loss(self) -> torch.Tensor:
         """Get accumulated cardinality loss and reset."""
@@ -663,14 +666,15 @@ if __name__ == "__main__":
 
     # Forward pass
     try:
-        cluster_features, assignment_matrix = partitioner(x, adj, mask)
+        cluster_features, cluster_adj, assignment_matrix = partitioner(x, adj, mask)
 
-        print("\nOutput shapes:")
+        print(f"\nOutput shapes:")
         print(f"  cluster_features: {cluster_features.shape}")
+        print(f"  cluster_adj:      {cluster_adj.shape}")
         print(f"  assignment_matrix:{assignment_matrix.shape}")
 
         # Stats
-        print("\nAssignment stats:")
+        print(f"\nAssignment stats:")
         for b in range(batch_size):
             assigned_nodes = assignment_matrix[b].sum(dim=0)   # nodes per cluster
             node_assignments = assignment_matrix[b].sum(dim=1) # clusters per node

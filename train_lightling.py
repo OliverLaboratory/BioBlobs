@@ -191,7 +191,7 @@ class MultiStageParTokenLightning(pl.LightningModule):
         dense_adj = to_dense_adj(edge_index, batch)
         
         # Apply partitioner  
-        cluster_features, assignment_matrix = self.model.partitioner(dense_x, dense_adj, mask)
+        cluster_features, cluster_adj, assignment_matrix = self.model.partitioner(dense_x, dense_adj, mask)
         cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
         
         # Global residue pooling for attention query
