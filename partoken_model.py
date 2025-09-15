@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.utils import to_dense_batch, to_dense_adj
+from torch_geometric.utils import to_dense_batch
 from torch_scatter import scatter_mean, scatter_sum, scatter_max
 from gvp.models import GVP, GVPConvLayer, LayerNorm
 from typing import Tuple, Optional
@@ -461,9 +461,15 @@ class ParTokenModel(nn.Module):
             batch = torch.zeros(node_features.size(0), dtype=torch.long, device=node_features.device)
 
         dense_x, mask = to_dense_batch(node_features, batch)  # [B, max_N, ns], [B, max_N]
-        dense_adj = to_dense_adj(edge_index, batch)           # [B, max_N, max_N]
+        
+        # NEW: a dense map of global node ids to line up flat ↔ padded layouts
+        dense_index, _ = to_dense_batch(
+            torch.arange(node_features.size(0), device=node_features.device), batch
+        )  # [B, max_N]
 
-        cluster_features, assignment_matrix = self.partitioner(dense_x, dense_adj, mask)
+        cluster_features, assignment_matrix = self.partitioner(
+            dense_x, None, mask, edge_index=edge_index, batch_vec=batch, dense_index=dense_index
+        )
         cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
         return cluster_features, cluster_valid_mask
 
@@ -578,13 +584,17 @@ class ParTokenModel(nn.Module):
                 device=node_features.device
             )
         
-        # Convert to dense format for partitioning
+        # Convert to dense format for partitioning (features + mask only)
         dense_x, mask = to_dense_batch(node_features, batch)  # [B, max_N, ns]
-        dense_adj = to_dense_adj(edge_index, batch)  # [B, max_N, max_N]
         
-        # Apply partitioner
+        # NEW: a dense map of global node ids to line up flat ↔ padded layouts
+        dense_index, _ = to_dense_batch(
+            torch.arange(node_features.size(0), device=node_features.device), batch
+        )  # [B, max_N]
+        
+        # Apply partitioner (adj=None; pass sparse graph info so the partitioner takes the fast path)
         cluster_features, assignment_matrix = self.partitioner(
-            dense_x, dense_adj, mask
+            dense_x, None, mask, edge_index=edge_index, batch_vec=batch, dense_index=dense_index
         )
 
         # --- VALID CLUSTER MASK (non-empty clusters) ---

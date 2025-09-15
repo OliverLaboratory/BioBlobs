@@ -5,6 +5,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_scatter import scatter_add, scatter_max
 from typing import Optional, Tuple
 
 
@@ -84,12 +85,13 @@ class SeedCondExpansion(nn.Module):
     def forward(
         self,
         x: torch.Tensor,                     # [B, N, F] node features
-        adj: torch.Tensor,                   # [B, N, N] adjacency 
+        adj: Optional[torch.Tensor],         # [B, N, N] or None
         seed_ctx_feats: torch.Tensor,        # [B, D_seed] seed + context features
         local_stats: torch.Tensor,           # [B, D_phi] local statistics
         cluster_mask: torch.Tensor,          # [B, N] current cluster members
         cand_mask: torch.Tensor,             # [B, N] k-hop candidates
         seed_repr: Optional[torch.Tensor] = None,  # [B, F] optional ST seed features
+        z_frac: Optional[torch.Tensor] = None      # [B, N]  <-- NEW
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """
         Returns:
@@ -112,9 +114,12 @@ class SeedCondExpansion(nn.Module):
         scores = (x_k @ q.unsqueeze(-1)).squeeze(-1) / (x_k.size(-1) ** 0.5)  # [B, N]
 
         # 2) Add normalized local link term to prefer tight substructures
-        e2c = self._edges_to_cluster(adj, cluster_mask)    # [B, N]
-        deg = self._degree(adj).clamp_min(1.0)             # [B, N]
-        z = e2c / deg                                      # fraction of neighbors in current cluster
+        if z_frac is None:
+            e2c = self._edges_to_cluster(adj, cluster_mask)    # [B, N]
+            deg = self._degree(adj).clamp_min(1.0)             # [B, N]
+            z = e2c / deg
+        else:
+            z = z_frac                                         # [B, N] (fast path)
         cand_scores = scores + self.alpha * z
 
         # 3) Build the threshold input (concat seed+context with local stats)
@@ -247,7 +252,8 @@ class Partitioner(nn.Module):
         # fraction of seed's edges that go into the candidate set
         seed_rows = adj_dense[torch.arange(B), seed_idx]             # [B, N]
         deg_seed_cand = (seed_rows * cand_f).sum(dim=1)              # [B]
-        seed_link_frac = deg_seed_cand / n_cand.clamp_min(1.0)       # [B]
+        deg_seed = adj_dense.sum(dim=-1)[torch.arange(B), seed_idx].clamp_min(1.0)
+        seed_link_frac = deg_seed_cand / deg_seed                    # [B]
 
         # density of the candidate-induced subgraph
         cand_adj = adj_dense * cand_f.unsqueeze(1) * cand_f.unsqueeze(2)   # [B, N, N]
@@ -331,9 +337,12 @@ class Partitioner(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,    # [B, N, D]
-        adj: torch.Tensor,  # [B, N, N] (dense; sparse is tolerated in the expander)
-        mask: torch.Tensor  # [B, N] bool
+        x: torch.Tensor,                       # [B, N, D]
+        adj: Optional[torch.Tensor],           # [B, N, N] or None
+        mask: torch.Tensor,                    # [B, N] bool
+        edge_index: Optional[torch.Tensor] = None,  # [2, E] flat over batch (PyG)
+        batch_vec: Optional[torch.Tensor] = None,   # [N_total] graph id per node
+        dense_index: Optional[torch.Tensor] = None  # [B, N] global node ids at padded slots
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Run partitioning and return cluster features and assignments.
@@ -342,9 +351,19 @@ class Partitioner(nn.Module):
             cluster_features: [B, S, D]
             assignment_matrix: [B, N, S]
         """
-        B, N, D = x.shape
         device = x.device
+        B, N, D = x.shape
         tau = self.get_temperature()
+
+        # Precompute degrees over the flat node axis if edge_index is available
+        deg_total_flat = None
+        if edge_index is not None and batch_vec is not None:
+            E = int(edge_index.size(1))
+            N_total = int(batch_vec.size(0))
+            deg_total_flat = scatter_add(
+                torch.ones(E, device=device, dtype=torch.float32),
+                edge_index[0], dim=0, dim_size=N_total
+            )  # [N_total]
 
         # Initial availability and context
         available_mask = mask.clone()
@@ -393,12 +412,22 @@ class Partitioner(nn.Module):
 
                 # --- Expansion with threshold-based scorer ---
                 if self.cluster_size_max > 1:
-                    k_hop_mask = self._compute_k_hop_neighbors(adj, seed_indices, mask)          # [B, N]
+                    # Use fast path if sparse graph info is available
+                    if edge_index is not None and batch_vec is not None and dense_index is not None:
+                        k_hop_mask = self._compute_k_hop_neighbors_fast(edge_index, batch_vec, dense_index, seed_indices, mask)
+                    else:
+                        k_hop_mask = self._compute_k_hop_neighbors(adj, seed_indices, mask)
+                    
                     cand_mask = available_mask & k_hop_mask & active.unsqueeze(-1)               # [B, N]
 
                     if cand_mask.any():
                         # Local scalars for threshold prediction
-                        phi_all = self._local_size_features(adj, cand_mask, seed_indices)        # [B, 3]
+                        if (edge_index is not None and batch_vec is not None and dense_index is not None and deg_total_flat is not None):
+                            phi_all = self._local_size_features_fast(
+                                edge_index, batch_vec, dense_index, cand_mask, seed_indices, deg_total_flat
+                            )
+                        else:
+                            phi_all = self._local_size_features(adj, cand_mask, seed_indices)        # [B, 3]
 
                         # Threshold predictor input on valid graphs
                         seed_features = x_seed_st[valid_seeds]                                   # [Bv, D]
@@ -409,6 +438,15 @@ class Partitioner(nn.Module):
                         # Current cluster mask (only seeds set so far for this cluster)
                         cluster_mask_cur = assignment_matrix[:, :, cluster_idx] > 0.5            # [B, N]
 
+                        # Precompute z = (edges->cluster)/deg in O(E) and pick the valid rows
+                        if edge_index is not None and batch_vec is not None and dense_index is not None and deg_total_flat is not None:
+                            z_frac_all = self._edges_to_cluster_frac_fast(
+                                edge_index, batch_vec, dense_index, cluster_mask_cur, mask, deg_total_flat
+                            )  # [B,N]
+                            z_frac_valid = z_frac_all[valid_seeds]                       # [Bv,N]
+                        else:
+                            z_frac_valid = None
+
                         # Sync expander temperature
                         self.expander.tau = float(tau)
 
@@ -417,19 +455,20 @@ class Partitioner(nn.Module):
                         if valid_seeds.any():
                             valid_indices = torch.where(valid_seeds)[0]
                             x_valid = x[valid_seeds]                                             # [Bv, N, F]
-                            adj_valid = adj[valid_seeds]                                         # [Bv, N, N] 
+                            adj_valid = adj[valid_seeds] if adj is not None else None            # [Bv, N, N] or None
                             cluster_mask_valid = cluster_mask_cur[valid_seeds]                   # [Bv, N]
                             cand_mask_valid = cand_mask[valid_seeds]                             # [Bv, N]
                             x_seed_st_valid = x_seed_st[valid_seeds]                             # [Bv, F]
                             
                             hard_sel_valid, soft_sel_valid, theta, exp_stats = self.expander(
                                 x=x_valid,
-                                adj=adj_valid,
+                                adj=None if z_frac_valid is not None else adj_valid,  # skip dense adj when we have z
                                 seed_ctx_feats=seed_ctx_feats,
                                 local_stats=phi,
                                 cluster_mask=cluster_mask_valid,
                                 cand_mask=cand_mask_valid,
-                                seed_repr=x_seed_st_valid
+                                seed_repr=x_seed_st_valid,
+                                z_frac=z_frac_valid                                  # <-- NEW
                             )
                             
                             # Broadcast back to full batch
@@ -508,6 +547,114 @@ class Partitioner(nn.Module):
         cluster_features = torch.stack(cluster_embeddings, dim=1)                      # [B, S, D]
 
         return cluster_features, assignment_matrix
+
+    def _compute_k_hop_neighbors_fast(
+        self,
+        edge_index: torch.Tensor,    # [2,E]
+        batch_vec: torch.Tensor,     # [N_total]
+        dense_index: torch.Tensor,   # [B,N]
+        seed_local_idx: torch.Tensor,# [B]
+        mask: torch.Tensor,          # [B,N]
+    ) -> torch.Tensor:
+        """O(kE) multi-graph BFS from one seed per graph. Returns [B,N] bool."""
+        device = edge_index.device
+        B, N = mask.shape
+        b_arange = torch.arange(B, device=device)
+        seed_global = dense_index[b_arange, seed_local_idx]             # [B]
+
+        N_total = int(batch_vec.size(0))
+        reachable = torch.zeros(N_total, dtype=torch.bool, device=device)
+        reachable[seed_global] = True
+        current = reachable.clone()
+
+        src, dst = edge_index[0], edge_index[1]
+        for _ in range(self.k_hop):
+            new_flat = scatter_max(current[src].long(), dst, dim=0, dim_size=N_total)[0].bool()
+            new_flat = new_flat & (~reachable)
+            if not new_flat.any():
+                break
+            reachable = reachable | new_flat
+            current = new_flat
+
+        khop = torch.zeros_like(mask, dtype=torch.bool)
+        flat_idx = dense_index.view(-1)
+        valid = mask.view(-1)
+        khop.view(-1)[valid] = reachable[flat_idx[valid]]
+        return khop
+
+    def _local_size_features_fast(
+        self,
+        edge_index: torch.Tensor,      # [2,E]
+        batch_vec: torch.Tensor,       # [N_total]
+        dense_index: torch.Tensor,     # [B,N]
+        cand_mask: torch.Tensor,       # [B,N] bool
+        seed_local_idx: torch.Tensor,  # [B]
+        deg_total_flat: torch.Tensor   # [N_total]
+    ) -> torch.Tensor:
+        """
+        O(E) compute of (n_cand_log, seed_link_frac, cand_density). Returns [B,3].
+        """
+        device = edge_index.device
+        B, N = cand_mask.shape
+        n_cand = cand_mask.sum(dim=1).to(torch.float32)                 # [B]
+        n_cand_log = (n_cand + 1.0).log()
+
+        b_arange = torch.arange(B, device=device)
+        seed_global = dense_index[b_arange, seed_local_idx]             # [B]
+
+        # Flatten candidate mask
+        N_total = int(batch_vec.size(0))
+        flat_idx = dense_index.view(-1)
+        valid = cand_mask.view(-1)
+        cand_flat = torch.zeros(N_total, dtype=torch.bool, device=device)
+        cand_flat[flat_idx[valid]] = True
+
+        # deg_seed→C
+        src, dst = edge_index[0], edge_index[1]
+        deg_to_C_flat = scatter_add(cand_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total)
+        deg_seed_cand = deg_to_C_flat[seed_global]                      # [B]
+
+        # CORRECT: fraction of seed's edges going to candidate set
+        deg_seed_total = deg_total_flat[seed_global].clamp_min(1.0)     # [B]
+        seed_link_frac = deg_seed_cand / deg_seed_total                 # [B]
+
+        # Candidate-induced edges per graph (undirected counted once)
+        in_C = cand_flat[src] & cand_flat[dst]                          # [E]
+        e_cand = scatter_add(in_C.to(torch.float32), batch_vec[src], dim=0, dim_size=B)
+        e_cand = 0.5 * e_cand                                           # [B]
+
+        denom = (n_cand * (n_cand - 1.0) * 0.5).clamp_min(1.0)
+        cand_density = e_cand / denom
+
+        return torch.stack([n_cand_log, seed_link_frac, cand_density], dim=-1)  # [B,3]
+
+    def _edges_to_cluster_frac_fast(
+        self,
+        edge_index: torch.Tensor,      # [2,E]
+        batch_vec: torch.Tensor,       # [N_total]
+        dense_index: torch.Tensor,     # [B,N]
+        cluster_mask: torch.Tensor,    # [B,N] bool
+        mask: torch.Tensor,            # [B,N] bool
+        deg_total_flat: torch.Tensor   # [N_total]
+    ) -> torch.Tensor:
+        """z_i = (# of edges from i into current cluster) / deg(i), in O(E). Returns [B,N]."""
+        device = edge_index.device
+        B, N = cluster_mask.shape
+        N_total = int(batch_vec.size(0))
+        src, dst = edge_index[0], edge_index[1]
+
+        # Flatten cluster mask
+        flat_idx = dense_index.view(-1)
+        valid = mask.view(-1)
+        clus_flat = torch.zeros(N_total, dtype=torch.bool, device=device)
+        clus_flat[flat_idx[valid]] = cluster_mask.view(-1)[valid]
+
+        e2c_flat = scatter_add(clus_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total)  # [N_total]
+        z_flat = e2c_flat / deg_total_flat.clamp_min(1.0)
+
+        z = torch.zeros_like(cluster_mask, dtype=torch.float32)
+        z.view(-1)[valid] = z_flat[flat_idx[valid]]
+        return z
 
     def get_cardinality_loss(self) -> torch.Tensor:
         """Get accumulated cardinality loss and reset."""

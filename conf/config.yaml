@@ -7,7 +7,7 @@ data:
   dataset_name: enzymecommission
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: /sb/oliver_lab/data/wangx86/partoken-protein/gvp-baseline/data
+  data_dir: /root/ICLR2026/partoken-protein/data
 
 model:
   node_in_dim: [6, 3]
@@ -26,5 +26,5 @@ train:
   num_workers: 4
   seed: 42
   models_dir: ./saved_models
-  use_wandb: true
+  use_wandb: false
   wandb_project: gvp-gnn-baseline

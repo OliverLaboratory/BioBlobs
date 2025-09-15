@@ -280,6 +280,18 @@ class VQCodebookEMA(nn.Module):
         K = self.K
         device = samples.device
 
+        # Handle case where we have fewer samples than codebook entries
+        if N < K:
+            print(f"Warning: Only {N} samples available for {K} codebook entries. "
+                  f"Using repeated samples for initialization.")
+            # Repeat samples to fill codebook
+            repeat_factor = (K + N - 1) // N  # Ceiling division
+            expanded_samples = samples.repeat(repeat_factor, 1)[:K]  # [K, D]
+            self.embeddings.copy_(expanded_samples)
+            self.ema_counts.copy_(torch.ones(K, device=device))
+            self.ema_sums.copy_(expanded_samples.clone())
+            return
+
         # Choose K random distinct initial centers
         perm = torch.randperm(N, device=device)
         centers = samples[perm[:K]].clone()                                    # [K, D]
@@ -298,7 +310,10 @@ class VQCodebookEMA(nn.Module):
             # Handle empty clusters
             empty = counts == 0
             if empty.any():
-                repl = samples[torch.randint(0, N, (int(empty.sum().item()),), device=device)]
+                num_empty = int(empty.sum().item())
+                # Sample replacement centers for empty clusters
+                repl_indices = torch.randint(0, N, (num_empty,), device=device)
+                repl = samples[repl_indices]  # [num_empty, D]
                 new_centers[empty] = repl
                 counts[empty] = 1  # avoid div by zero
 

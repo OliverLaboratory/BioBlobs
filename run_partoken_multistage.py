@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Only if you want to use specific GPU
+os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -141,6 +141,41 @@ def main(cfg: DictConfig):
             stage_info
         )
         print(f"✓ Stage {stage_idx} component checkpoint saved to {component_checkpoint_path}")
+        
+        # Run interpretability analysis for this stage
+        run_interp = cfg.multistage.get('run_interpretability', True)
+        # Allow interpretability for stage 0 if explicitly enabled
+        if stage_idx == 0:
+            run_interp = cfg.multistage.get('run_stage0_interpretability', run_interp)
+        
+        if (not model.bypass_codebook or stage_idx == 0) and run_interp:
+            print(f"\n🔍 INTERPRETABILITY ANALYSIS - STAGE {stage_idx}")
+            print("=" * 60)
+            
+            # Create stage-specific interpretability output directory
+            stage_interp_output_dir = os.path.join(stage_output_dir, "interpretability")
+            os.makedirs(stage_interp_output_dir, exist_ok=True)
+            
+            # Run analysis on validation set for this stage
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            
+            print(f"📊 Running interpretability analysis on validation set for stage {stage_idx}...")
+            stage_interp_results = model.get_inter_info(
+                val_loader, 
+                device=device,
+                max_batches=cfg.multistage.get('interpretability_max_batches', 10)  # Limit batches for stage analysis
+            )
+            
+            if stage_interp_results is not None:
+                # Save stage-specific results
+                stage_results_path = os.path.join(stage_interp_output_dir, f"stage_{stage_idx}_val_interpretability.json")
+                save_interpretability_results(stage_interp_results, stage_results_path)
+                
+                # Print stage summary
+                print(f"📈 Stage {stage_idx} Interpretability Summary:")
+                print_interpretability_summary(stage_interp_results)
+            else:
+                print("⚠️  Interpretability analysis skipped (bypass_codebook mode)")
         
         # Close wandb run for this stage
         if wandb_logger is not None:

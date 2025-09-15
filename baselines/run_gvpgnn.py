@@ -8,8 +8,11 @@ from pytorch_lightning.loggers import WandbLogger
 from tqdm import tqdm
 import json
 import argparse
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.proteinshake_dataset import get_dataset, create_dataloader
-from baseline_model import BaselineGVPModel
+from baselines.baseline_model import BaselineGVPModel
 from utils.utils import set_seed
 import torch
 import torch.nn as nn
@@ -93,7 +96,7 @@ class GVPBaseline(pl.LightningModule):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         return optimizer
 
-@hydra.main(version_base="1.1", config_path='conf', config_name='config')
+@hydra.main(version_base="1.1", config_path='../conf', config_name='config')
 def main(cfg: DictConfig):
     print(OmegaConf.to_yaml(cfg))
     set_seed(cfg.train.seed)

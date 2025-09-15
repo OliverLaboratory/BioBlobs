@@ -1,0 +1,102 @@
+hydra:
+  run:
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/stage0_exp_${now:%Y-%m-%d-%H-%M-%S}
+  output_subdir: null
+
+data: 
+  dataset_name: enzymecommission
+  split: structure
+  split_similarity_threshold: 0.7
+  data_dir: /root/ICLR2026/baselines/partoken-protein/data
+  test_mode: true  # Set to false for full dataset
+
+model:
+  node_in_dim: [6, 3]
+  node_h_dim: [100, 16]      # Experiment with [64,8], [128,32]
+  edge_in_dim: [32, 1]
+  edge_h_dim: [32, 1]
+  num_layers: 3              # Experiment with 2, 4, 5
+  drop_rate: 0.1             # Experiment with 0.0, 0.2, 0.3
+  pooling: sum
+  seq_in: false
+  
+  # Partitioner hyperparameters (CRITICAL for stage 0)
+  max_clusters: 5            # Experiment with 3, 8, 10
+  nhid: 50                   # Hidden dim for partitioner
+  k_hop: 1                   # Experiment with 2, 3
+  cluster_size_max: 25       # Experiment with 15, 35, 50
+  termination_threshold: 0.95 # Experiment with 0.9, 0.98
+  tau_init: 1.0
+  tau_min: 0.1
+  tau_decay: 0.95
+  
+  # Codebook params (unused in stage 0 but required)
+  codebook_size: 512
+  codebook_dim: null
+  codebook_beta: 0.25
+  codebook_decay: 0.99
+  codebook_eps: 1e-5
+  codebook_distance: l2
+  codebook_cosine_normalize: false
+  
+  # Loss weights (unused in stage 0)
+  lambda_vq: 0.0
+  lambda_ent: 0.0
+  lambda_psc: 0.0
+  lambda_card: 0.0
+  psc_temp: 0.3
+
+train:
+  batch_size: 64             # Experiment with 32, 128
+  num_workers: 8
+  seed: 42
+  models_dir: ./saved_models
+  use_wandb: false            # Enable for tracking experiments
+  wandb_project: partoken-stage0-experiments
+  
+  # Learning rate scheduling
+  use_cosine_schedule: true
+  warmup_epochs: 5           # Experiment with 2, 10
+
+# Multi-stage training configuration
+multistage:
+  enabled: true
+  run_interpretability: true
+  run_stage0_interpretability: true  # Enable interpretability for stage 0
+  interpretability_max_batches: 20
+  
+  # Stage 0: Baseline - MAIN FOCUS
+  stage0:
+    name: "baseline"
+    epochs: 120               # Experiment with 20, 50, 100
+    lr: 1e-3                # Experiment with 5e-5, 1e-4, 5e-4, 1e-3
+    bypass_codebook: true    # MUST be true for stage 0
+    loss_weights:
+      lambda_vq: 0.0         # MUST be 0 (no codebook)
+      lambda_ent: 0.0        # MUST be 0 
+      lambda_psc: 0.0        # MUST be 0
+      lambda_card: 0.0       # MUST be 0
+      
+  # Stage 1: DISABLED for stage 0 experiments
+  stage1:
+    name: "joint_finetuning"
+    epochs: 0                # KEEP as 0 to skip stage 1
+    lr: 5e-5
+    kmeans_init: true
+    kmeans_batches: 50
+    loss_ramp:
+      enabled: true
+      ramp_epochs: 5
+      initial_weights:
+        lambda_vq: 0.1
+        lambda_ent: 1e-4
+        lambda_psc: 1e-4
+        lambda_card: 1e-4
+      final_weights:
+        lambda_vq: 1.0
+        lambda_ent: 1e-3
+        lambda_psc: 1e-2
+        lambda_card: 0.005
+    freeze_codebook_final:
+      enabled: true
+      epochs: 1
