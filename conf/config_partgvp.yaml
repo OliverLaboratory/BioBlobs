@@ -39,7 +39,7 @@ model:
   psc_temp: 0.3
 
 train:
-  epochs: 50
+  epochs: 120
   batch_size: 64
   lr: 1e-4
   num_workers: 7

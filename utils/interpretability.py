@@ -70,8 +70,7 @@ def extract_cluster_info_batch(
 
 def analyze_single_protein(
     importance_data: Dict[str, Any],
-    protein_idx: int,
-    top_k: int = 3
+    protein_idx: int
 ) -> Dict[str, Any]:
     """
     Analyze interpretability for a single protein.
@@ -79,7 +78,6 @@ def analyze_single_protein(
     Args:
         importance_data: Output from extract_cluster_importance_batch
         protein_idx: Index of protein to analyze
-        top_k: Number of top important clusters to highlight
         
     Returns:
         Dict with detailed analysis for the protein
@@ -98,7 +96,7 @@ def analyze_single_protein(
     
     # Rank clusters by importance
     importance_ranking = np.argsort(valid_importance)[::-1]  # Descending order
-    top_clusters = valid_cluster_indices[importance_ranking[:top_k]]
+    all_clusters = valid_cluster_indices[importance_ranking]
     
     # Calculate confidence and correctness
     confidence = np.max(prob)
@@ -121,14 +119,14 @@ def analyze_single_protein(
         'cluster_sizes': cluster_sizes[valid_clusters].tolist(),
         'importance_scores': valid_importance.tolist(),
         'importance_concentration': float(importance_concentration),
-        'top_clusters': {
-            'indices': top_clusters.tolist(),
-            'importance_scores': importance[top_clusters].tolist(),
-            'sizes': cluster_sizes[top_clusters].tolist()
+        'all_clusters': {
+            'indices': all_clusters.tolist(),
+            'importance_scores': importance[all_clusters].tolist(),
+            'sizes': cluster_sizes[all_clusters].tolist()
         },
         'cluster_composition': {
             int(cluster_idx): np.where(assignment[:, cluster_idx] > 0.5)[0].tolist()
-            for cluster_idx in top_clusters
+            for cluster_idx in all_clusters
         }
     }
 
