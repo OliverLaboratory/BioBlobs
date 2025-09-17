@@ -401,7 +401,7 @@ class PartGVPLightning(pl.LightningModule):
     
     def __init__(self, model_cfg, train_cfg, num_classes):
         super().__init__()
-        self.save_hyperparameters(logger=False)
+        self.save_hyperparameters()
         
         # Create model - we'll always bypass the codebook
         self.model = ParTokenModel(

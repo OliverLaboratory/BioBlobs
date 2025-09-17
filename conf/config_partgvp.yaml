@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ./outputs/partgvp/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
+    dir: ./outputs/partgvp-sequence/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
   output_subdir: null
 
 data: 
@@ -23,7 +23,7 @@ model:
   max_clusters: 5
   nhid: 50
   k_hop: 1
-  cluster_size_max: 25
+  cluster_size_max: 15
   termination_threshold: 0.95
   tau_init: 1.0
   tau_min: 0.1
@@ -41,14 +41,14 @@ model:
 train:
   epochs: 120
   batch_size: 128
-  lr: 1e-4
+  lr: 1e-3
   num_workers: 7
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
   wandb_project: partgvp
   # Cosine learning rate schedule with warmup
-  use_cosine_schedule: true
+  use_cosine_schedule: false
   warmup_epochs: 5
 
 # Interpretability settings

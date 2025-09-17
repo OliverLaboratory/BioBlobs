@@ -20,7 +20,7 @@ from train_lightling import PartGVPLightning
 import json
 
 
-def test_checkpoint(checkpoint_path, model_class, model_cfg, train_cfg, num_classes, test_loader, checkpoint_type="best"):
+def test_checkpoint(checkpoint_path, model_class, model_cfg, train_cfg, num_classes, test_loader, checkpoint_type="best", wandb_logger=None):
     """Test a specific checkpoint and return results."""
     print(f"\n🧪 Testing {checkpoint_type} checkpoint: {checkpoint_path}")
     
@@ -32,11 +32,11 @@ def test_checkpoint(checkpoint_path, model_class, model_cfg, train_cfg, num_clas
         num_classes=num_classes
     )
     
-    # Create test trainer
+    # Create test trainer with the same logger if provided
     test_trainer = pl.Trainer(
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1 if torch.cuda.is_available() else None,
-        logger=False
+        logger=wandb_logger if wandb_logger is not None else False
     )
     
     # Run test
@@ -157,7 +157,7 @@ def main(cfg: DictConfig):
     # Test best checkpoint
     if best_checkpoint_path and os.path.exists(best_checkpoint_path):
         best_results, best_model = test_checkpoint(
-            best_checkpoint_path, PartGVPLightning, cfg.model, cfg.train, num_classes, test_loader, "best"
+            best_checkpoint_path, PartGVPLightning, cfg.model, cfg.train, num_classes, test_loader, "best", wandb_logger
         )
         results_summary['checkpoints']['best'] = best_results
         final_model = best_model  # Use best model for interpretability
@@ -168,7 +168,7 @@ def main(cfg: DictConfig):
     # Test last checkpoint
     if last_checkpoint_path and os.path.exists(last_checkpoint_path):
         last_results, _ = test_checkpoint(
-            last_checkpoint_path, PartGVPLightning, cfg.model, cfg.train, num_classes, test_loader, "last"
+            last_checkpoint_path, PartGVPLightning, cfg.model, cfg.train, num_classes, test_loader, "last", wandb_logger
         )
         results_summary['checkpoints']['last'] = last_results
     else:
