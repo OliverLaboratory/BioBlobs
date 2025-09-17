@@ -7,8 +7,8 @@ data:
   dataset_name: enzymecommission
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: /root/ICLR2026/baselines/partoken-protein/data
-  test_mode: true  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  data_dir: /home/wangx86/partoken/partoken-protein/data
+  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 model:
   node_in_dim: [6, 3]
@@ -40,7 +40,7 @@ model:
 
 train:
   epochs: 120
-  batch_size: 64
+  batch_size: 128
   lr: 1e-4
   num_workers: 7
   seed: 42

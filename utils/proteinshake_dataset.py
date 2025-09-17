@@ -28,7 +28,7 @@ def _get_label_key(pinfo, dataset_name):
     elif dataset_name == "proteinfamily":
         return pinfo["Pfam"][0]
     elif dataset_name == "scope":
-        return pinfo["SCOP-SF"]
+        return pinfo["SCOP-FA"]
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
 
@@ -128,7 +128,9 @@ class ProteinClassificationDataset(data.Dataset):
             "N": 2,
             "Y": 18,
             "M": 12,
+            "X": 20,  # Unknown amino acid
         }
+        self.num_amino_acids = 21  # 20 standard amino acids + X for unknown
         self.num_to_letter = {v: k for k, v in self.letter_to_num.items()}
 
     def _infer_num_classes(self, data_list):
@@ -148,17 +150,29 @@ class ProteinClassificationDataset(data.Dataset):
                 protein["coords"], device=self.device, dtype=torch.float32
             )
             seq = torch.as_tensor(
-                [self.letter_to_num[a] for a in protein["seq"]],
+                [self.letter_to_num.get(a, 20) for a in protein["seq"]],  # Use 20 (X) as default for unknown amino acids
                 device=self.device,
                 dtype=torch.long,
             )
 
-            # assert len(seq) == coords.shape[0], (len(seq), coords.shape[0])
-            # if len(seq) == coords.shape[0]:
-            #     print(f"Processing protein {name} with {len(seq)} residues")
-            # else:
-            #     raise ValueError(f"Sequence length {len(seq)} does not match coordinates length {coords.shape[0]} for protein {name}")
-
+            # Handle sequence/coordinate length mismatch
+            if len(seq) != coords.shape[0]:
+                if len(seq) > coords.shape[0]:
+                    # Truncate sequence to match coordinates
+                    seq = seq[:coords.shape[0]]
+                else:
+                    # Pad sequence with unknown amino acid token (20 = 'X')
+                    pad_length = coords.shape[0] - len(seq)
+                    padding = torch.full((pad_length,), 20, device=self.device, dtype=torch.long)
+                    seq = torch.cat([seq, padding])
+            
+            # Validate sequence indices are within bounds (0-20 for the embedding layer)
+            if torch.any(seq >= 21) or torch.any(seq < 0):
+                # Clamp out-of-bounds values to safe range
+                seq = torch.clamp(seq, 0, 20)
+                print(f"Warning: Clamped out-of-bounds sequence indices for protein {name}")
+            
+            assert len(seq) == coords.shape[0], (len(seq), coords.shape[0])
             # Create mask for valid residues (finite coordinates)
             mask = torch.isfinite(coords.sum(dim=(1, 2)))
             coords[~mask] = np.inf
@@ -260,16 +274,6 @@ class ProteinClassificationDataset(data.Dataset):
         perp = _normalize(torch.linalg.cross(c, n))
         vec = -bisector * math.sqrt(1 / 3) - perp * math.sqrt(2 / 3)
         return vec
-
-
-def print_example_data(data):
-    print(f"Protein Name: {data.name}")
-    print(f"Sequence: {data.seq}")
-    print(f"Number of Nodes: {data.x.shape[0]}")
-    print(f"Node Features Shape: {data.node_s.shape}, {data.node_v.shape}")
-    print(f"Edge Features Shape: {data.edge_s.shape}, {data.edge_v.shape}")
-    print(f"Edge Index Shape: {data.edge_index.shape}")
-    print(f"Label (y): {data.y.item() if data.y is not None else 'N/A'}")
 
 
 
@@ -390,8 +394,22 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         filtering_stats["successful"] += 1
         filtered_indices.append(original_idx)  # Track the original index
 
-        # Truncate sequence to match coords length if needed
+        # Truncate sequence to match coords length if needed and use the adjusted
+        # sequence everywhere to avoid mismatches between seq and coords.
         adjusted_seq = seq[:len(coords)] if len(seq) > len(coords) else seq
+
+        # If sequence and coords lengths still mismatch (coords longer), pad the
+        # adjusted sequence with unknown residue symbol 'X' to match coords length.
+        if len(adjusted_seq) < len(coords):
+            pad_len = len(coords) - len(adjusted_seq)
+            adjusted_seq = adjusted_seq + ("X" * pad_len)
+
+        # Now they should match; if not, record a warning and skip the protein.
+        if len(adjusted_seq) != len(coords):
+            print(
+                f"Skipping {name}: final sequence length {len(adjusted_seq)} does not match coords length {len(coords)}"
+            )
+            continue
 
         structures.append(
             {
@@ -606,7 +624,7 @@ def get_dataset(
     for structures in [train_structures, val_structures, test_structures]:
         all_labels.update(s["label"] for s in structures)
     
-    print(f"Found {len(all_labels)} unique labels in processed data: {sorted(all_labels)}")
+    print(f"Found {len(all_labels)} unique labels in processed data")
     assert len(all_labels) <= num_classes, f"More labels found ({len(all_labels)}) than expected ({num_classes})"
 
     # Apply test mode limiting if enabled
@@ -628,7 +646,9 @@ def get_dataset(
     train_dataset = ProteinClassificationDataset(
         train_structures, num_classes=num_classes
     )
-    val_dataset = ProteinClassificationDataset(val_structures, num_classes=num_classes)
+    val_dataset = ProteinClassificationDataset(
+        val_structures, num_classes=num_classes
+    )
     test_dataset = ProteinClassificationDataset(
         test_structures, num_classes=num_classes
     )

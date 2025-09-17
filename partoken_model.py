@@ -75,7 +75,7 @@ class ParTokenModel(nn.Module):
         
         # Adjust input dimensions for sequence features
         if seq_in:
-            self.sequence_embedding = nn.Embedding(20, 20)
+            self.sequence_embedding = nn.Embedding(21, 20)  # Support 21 tokens (0-20), embed to 20 dims
             node_in_dim = (node_in_dim[0] + 20, node_in_dim[1])
         
         # GVP layers

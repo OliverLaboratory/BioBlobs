@@ -1,6 +1,4 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
-
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
@@ -85,6 +83,8 @@ def main(cfg: DictConfig):
         data_dir=cfg.data.data_dir,
         test_mode=cfg.data.get('test_mode', False),
     )
+
+    # return
     
     train_loader = create_dataloader(train_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=True)
     val_loader = create_dataloader(val_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False)
