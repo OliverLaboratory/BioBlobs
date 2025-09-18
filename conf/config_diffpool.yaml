@@ -1,13 +1,14 @@
 hydra:
   run:
-    dir: .
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
   output_subdir: null
 
-data:
+data: 
   dataset_name: enzymecommission
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: /sb/oliver_lab/data/wangx86/partoken-protein/gvp-baseline/data
+  data_dir: /home/wangx86/partoken/partoken-protein/data
+  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 model:
   node_in_dim: [6, 3]
@@ -24,11 +25,19 @@ model:
   link_pred_weight: 0.5
 
 train:
-  epochs: 50
-  lr: 1e-4
-  batch_size: 64
-  num_workers: 4
+  epochs: 120
+  batch_size: 128
+  lr: 1e-3
+  num_workers: 8
   seed: 42
   models_dir: ./saved_models
-  use_wandb: true
-  wandb_project: gvp-diffpool-baseline
+  use_wandb: false
+  wandb_project: diffpool
+  # Cosine learning rate schedule with warmup
+  use_cosine_schedule: false
+  warmup_epochs: 5
+
+# Interpretability settings
+interpretability:
+  enabled: true
+  max_batches: 20  # Limit for interpretability analysis

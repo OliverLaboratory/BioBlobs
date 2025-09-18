@@ -1,6 +1,4 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'  # Only if you want to use specific GPU
-
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
@@ -136,11 +134,12 @@ def main(cfg: DictConfig):
 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    # Custom output directory: ./outputs/wandb_project/dataset_name/timestamp
+    # Custom output directory: ./outputs/wandb_project/dataset_name/split/timestamp
     custom_output_dir = os.path.join(
         "./outputs",
         cfg.train.wandb_project,
         cfg.data.dataset_name,
+        cfg.data.split,
         timestamp
     )
     os.makedirs(custom_output_dir, exist_ok=True)
@@ -162,8 +161,15 @@ def main(cfg: DictConfig):
     # Model
     model = GVPDiffPool(cfg.model, cfg.train, num_classes)
 
+    # Set up WandB run name
+    run_name = f"diffpool_{cfg.data.dataset_name}_{cfg.data.split}_{timestamp}"
+    
     # Logger
-    wandb_logger = WandbLogger(project=cfg.train.wandb_project) if cfg.train.use_wandb else None
+    wandb_logger = WandbLogger(
+        project=cfg.train.wandb_project,
+        name=run_name,
+        save_dir=custom_output_dir
+    ) if cfg.train.use_wandb else None
 
     # Checkpoint callback
     checkpoint_callback = ModelCheckpoint(
@@ -196,27 +202,63 @@ def main(cfg: DictConfig):
     print(f"DiffPool max clusters: {cfg.model.max_clusters}")
     print(f"Entropy weight: {cfg.model.entropy_weight}")
     print(f"Link prediction weight: {cfg.model.link_pred_weight}")
+    print(f"Run name: {run_name}")
+    print(f"Output directory: {custom_output_dir}")
     print("=" * 75)
 
+    # Training
     trainer.fit(model, train_loader, val_loader)
     
     print("\n" + "=" * 75)
     print("TESTING")
     print("=" * 75)
     
-    trainer.test(model, test_loader)
+    # Test with best model
+    test_results = trainer.test(model, test_loader, ckpt_path='best')
+    
+    # Extract and log final test metrics
+    if test_results:
+        test_metrics = test_results[0]
+        final_test_acc = test_metrics.get('test_acc', 0.0)
+        final_test_loss = test_metrics.get('test_loss', 0.0)
+        final_test_entropy = test_metrics.get('test_entropy_loss', 0.0)
+        final_test_link_pred = test_metrics.get('test_link_pred_loss', 0.0)
+        
+        print(f"Final Test Results:")
+        print(f"  Test Accuracy: {final_test_acc:.4f}")
+        print(f"  Test Loss: {final_test_loss:.4f}")
+        print(f"  Test Entropy Loss: {final_test_entropy:.4f}")
+        print(f"  Test Link Pred Loss: {final_test_link_pred:.4f}")
+        print("=" * 75)
+        
+        # Log to wandb if enabled
+        if wandb_logger is not None:
+            wandb_logger.experiment.log({
+                "final_test_acc": final_test_acc,
+                "final_test_loss": final_test_loss,
+                "final_test_entropy_loss": final_test_entropy,
+                "final_test_link_pred_loss": final_test_link_pred
+            })
 
-    # Save best model and summary manually (original functionality)
+    # Save model and summary
     if wandb_logger is not None:
         # Save model checkpoint
         best_model_path = os.path.join(custom_output_dir, 'best_model.pt')
         trainer.save_checkpoint(best_model_path)
         wandb_logger.experiment.save(best_model_path)
-        # Log summary
+        
+        # Log run summary
         wandb_logger.experiment.log({
-            "best_model_path": best_model_path
+            "best_model_path": best_model_path,
+            "dataset": cfg.data.dataset_name,
+            "split": cfg.data.split,
+            "max_clusters": cfg.model.max_clusters,
+            "entropy_weight": cfg.model.entropy_weight,
+            "link_pred_weight": cfg.model.link_pred_weight
         })
         wandb.finish()
+    
+    print(f"\nTraining completed. Results saved to: {custom_output_dir}")
 
 if __name__ == "__main__":
     main()
