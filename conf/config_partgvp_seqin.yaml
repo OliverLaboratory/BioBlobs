@@ -1,6 +1,6 @@
 hydra:
   run:
-    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
+    dir: ./outputs/partgvp-sequence/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
   output_subdir: null
 
 data: 

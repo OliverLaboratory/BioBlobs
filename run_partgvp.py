@@ -104,7 +104,7 @@ def main(cfg: DictConfig):
         timestamp = datetime.now().strftime("%Y-%m-%d")
         wandb_logger = WandbLogger(
             project=cfg.train.wandb_project,
-            name=f"{cfg.data.dataset_name}_{cfg.data.split}_{timestamp}",
+            name=f"{cfg.data.dataset_name}_{cfg.data.split}_seq_{cfg.model.seq_in}_{cfg.model.max_clusters}_{cfg.model.cluster_size_max}_{cfg.train.lr}_{timestamp}",
             tags=["partgvp", cfg.data.dataset_name, cfg.data.split]
         )
     
