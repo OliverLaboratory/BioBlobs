@@ -135,7 +135,7 @@ class ParTokenModel(nn.Module):
         self.psc_temp = psc_temp
         
         # Use original cluster embeddings for classification (not quantized)
-        self.use_quantized_for_classification = False
+        self.use_quantized_for_classification = True
         
         # Attention mechanism for cluster importance
         self.cluster_attention = nn.Sequential(

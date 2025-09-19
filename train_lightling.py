@@ -392,6 +392,162 @@ class MultiStageParTokenLightning(pl.LightningModule):
         return stage_cfg.epochs
 
 
+def create_partoken_resume_model_from_checkpoint(
+    partgvp_checkpoint_path: str,
+    model_cfg: DictConfig,
+    train_cfg: DictConfig,
+    multistage_cfg: DictConfig,
+    num_classes: int,
+    load_model_config_from_checkpoint: bool = True
+):
+    """
+    Create ParToken resume model from PartGVP checkpoint using dedicated resume Lightning module.
+    
+    Args:
+        partgvp_checkpoint_path: Path to the PartGVP checkpoint
+        model_cfg: Model configuration
+        train_cfg: Training configuration  
+        multistage_cfg: Multi-stage training configuration
+        num_classes: Number of output classes
+        load_model_config_from_checkpoint: Whether to load model config from checkpoint
+        
+    Returns:
+        ParTokenResumeTrainingLightning model with transferred weights
+    """
+    print(f"🔄 Loading PartGVP checkpoint: {partgvp_checkpoint_path}")
+    
+    # Load checkpoint to extract hyperparameters (set weights_only=False for PyTorch 2.6+ compatibility)
+    checkpoint = torch.load(partgvp_checkpoint_path, map_location='cpu', weights_only=False)
+    
+    if load_model_config_from_checkpoint and 'hyper_parameters' in checkpoint:
+        print("📋 Loading model configuration from checkpoint...")
+        
+        # Extract model config from checkpoint hyperparameters
+        hparams = checkpoint['hyper_parameters']
+        
+        if 'model_cfg' in hparams:
+            # Update model_cfg with values from checkpoint
+            checkpoint_model_cfg = hparams['model_cfg']
+            for key, value in checkpoint_model_cfg.items():
+                if hasattr(model_cfg, key):
+                    setattr(model_cfg, key, value)
+                    print(f"  • Updated {key}: {value}")
+                else:
+                    print(f"  ⚠ Unknown model config key in checkpoint: {key}")
+        
+        # Also check direct hyperparameters for model config
+        model_keys = [
+            'node_in_dim', 'node_h_dim', 'edge_in_dim', 'edge_h_dim', 'seq_in',
+            'num_layers', 'drop_rate', 'pooling', 'max_clusters', 'nhid', 'k_hop',
+            'cluster_size_max', 'termination_threshold', 'tau_init', 'tau_min', 'tau_decay'
+        ]
+        
+        for key in model_keys:
+            if key in hparams and hasattr(model_cfg, key):
+                setattr(model_cfg, key, hparams[key])
+                print(f"  • Updated {key}: {hparams[key]}")
+    
+    # Load the PartGVP model to get the exact architecture
+    from train_lightling import PartGVPLightning
+    partgvp_model = PartGVPLightning.load_from_checkpoint(
+        partgvp_checkpoint_path,
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        num_classes=num_classes
+    )
+    
+    print(f"✓ PartGVP model loaded successfully")
+    print(f"  • Architecture: {sum(p.numel() for p in partgvp_model.parameters()):,} parameters")
+    
+    # Create new ParToken resume model with codebook enabled
+    from partoken_resume_lightning import ParTokenResumeTrainingLightning
+    partoken_model = ParTokenResumeTrainingLightning(
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        multistage_cfg=multistage_cfg,
+        num_classes=num_classes
+    )
+    
+    # Transfer weights from PartGVP to ParToken (excluding codebook)
+    # Both models should have identical architectures except for codebook
+    source_state_dict = partgvp_model.model.state_dict()
+    target_state_dict = partoken_model.model.state_dict()
+    
+    transferred_keys = []
+    skipped_keys = []
+    mismatched_keys = []
+    
+    for key, value in source_state_dict.items():
+        if key in target_state_dict and not key.startswith('codebook'):
+            # Check if shapes match
+            if target_state_dict[key].shape == value.shape:
+                target_state_dict[key] = value
+                transferred_keys.append(key)
+            else:
+                mismatched_keys.append((key, target_state_dict[key].shape, value.shape))
+        else:
+            skipped_keys.append(key)
+    
+    # Report transfer results
+    if mismatched_keys:
+        print("❌ Shape mismatches found:")
+        for key, target_shape, source_shape in mismatched_keys:
+            print(f"  • {key}: target{target_shape} vs source{source_shape}")
+        raise ValueError("Model architecture mismatch! Check model configuration.")
+    
+    # Load the transferred weights
+    partoken_model.model.load_state_dict(target_state_dict)
+    
+    print(f"✓ Successfully transferred {len(transferred_keys)} parameter groups")
+    print(f"⚠ Skipped {len(skipped_keys)} parameter groups (codebook/missing keys)")
+    print(f"🎯 ParToken resume model ready with {sum(p.numel() for p in partoken_model.parameters()):,} parameters")
+    
+    return partoken_model
+
+
+def initialize_codebook_from_dataloader(
+    partoken_model,  # Can be ParTokenResumeTrainingLightning or MultiStageParTokenLightning
+    train_loader,
+    device: torch.device,
+    max_batches: int = 50
+) -> Dict[str, any]:
+    """
+    Initialize ParToken codebook using the existing kmeans_init_from_loader method.
+    
+    Args:
+        partoken_model: ParToken model with uninitialized codebook (Lightning module)
+        train_loader: Training data loader
+        device: Device to run on
+        max_batches: Maximum batches for initialization
+        
+    Returns:
+        Initialization statistics
+    """
+    print(f"🎲 Initializing codebook with K-means (max_batches={max_batches})")
+    
+    # Move model to device
+    partoken_model.model.to(device)
+    
+    # Use existing kmeans initialization method
+    partoken_model.model.kmeans_init_from_loader(
+        loader=train_loader,
+        max_batches=max_batches,
+        device=device
+    )
+    
+    # Return initialization stats
+    stats = {
+        "codebook_size": partoken_model.model.codebook.K,
+        "embedding_dim": partoken_model.model.codebook.D,
+        "initialization_method": "kmeans_from_clusters",
+        "max_batches_used": max_batches
+    }
+    
+    print(f"✓ Codebook initialized: {stats['codebook_size']} codes, {stats['embedding_dim']} dims")
+    
+    return stats
+
+
 class PartGVPLightning(pl.LightningModule):
     """PartGVP Lightning module that trains only GVP + partitioner + global-cluster attention fusion.
     

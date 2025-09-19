@@ -125,7 +125,7 @@ def load_stage_checkpoint(checkpoint_path: str):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
     print(f"📂 Loading PyTorch Lightning checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     
     # Print basic checkpoint info
     if 'epoch' in checkpoint:
