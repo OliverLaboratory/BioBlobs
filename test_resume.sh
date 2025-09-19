@@ -37,10 +37,10 @@ CUDA_VISIBLE_DEVICES=1 python run_partoken_resume.py \
     resume.partgvp_checkpoint_path="$PARTGVP_CHECKPOINT_PATH" \
     data.dataset_name="$DATASET" \
     data.split="$SPLIT" \
-    data.test_mode=true \
-    multistage.stage0.epochs=3 \
+    data.test_mode=false \
+    multistage.stage0.epochs=2 \
     train.batch_size=128 \
-    train.use_wandb=false \
+    train.use_wandb=true \
     resume.kmeans_max_batches=5 \
     evaluation.max_batches_interp=5
 

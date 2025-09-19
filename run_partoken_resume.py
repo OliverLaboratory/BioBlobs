@@ -14,9 +14,6 @@ from utils.interpretability import (
     save_interpretability_results,
     dataset_inter_results,
 )
-from utils.save_checkpoints import (
-    create_checkpoint_summary
-)
 from train_lightling import (
     MultiStageParTokenLightning,
     create_partoken_resume_model_from_checkpoint,
@@ -142,6 +139,33 @@ def main(cfg: DictConfig):
     print(f"  • Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     print("  • Mode: ParToken with VQ codebook")
     
+    # Ensure model is in training mode after loading from checkpoint
+    model.train()
+    print("  • Model set to training mode")
+    
+    # Force all modules to training mode (except those that should remain in eval mode)
+    for name, module in model.named_modules():
+        if hasattr(module, 'training'):
+            # Keep specific modules in eval mode if needed (e.g., frozen batch norm)
+            if not any(skip in name for skip in ['frozen', 'eval_only']):
+                module.train()
+    
+    # Check for any modules still in eval mode
+    eval_modules = []
+    for name, module in model.named_modules():
+        if hasattr(module, 'training') and not module.training:
+            eval_modules.append(name)
+    
+    if eval_modules:
+        print(f"  ⚠️  Warning: {len(eval_modules)} modules still in eval mode:")
+        for mod in eval_modules[:5]:  # Show first 5
+            print(f"     - {mod}")
+        if len(eval_modules) > 5:
+            print(f"     ... and {len(eval_modules) - 5} more")
+        print("     These may be intentionally frozen or may cause the PyTorch Lightning warning.")
+    else:
+        print("  • All modules are in training mode")
+    
     # Run initial interpretability analysis before training
     print(f"\n🔍 INITIAL INTERPRETABILITY ANALYSIS (BEFORE TRAINING)")
     print("=" * 70)
@@ -156,8 +180,10 @@ def main(cfg: DictConfig):
         max_batches=cfg.evaluation.get('max_batches_interp', 20)
     )
     
-    # Save initial interpretability results
-    initial_interp_path = os.path.join(custom_output_dir, "initial.json")
+    # Save initial interpretability results in interpretability subdirectory
+    interp_dir = os.path.join(custom_output_dir, "interpretability")
+    os.makedirs(interp_dir, exist_ok=True)
+    initial_interp_path = os.path.join(interp_dir, "initial.json")
     save_interpretability_results(initial_interp_results, initial_interp_path)
     
     print(f"✓ Initial interpretability results saved to: {initial_interp_path}")
@@ -323,9 +349,6 @@ def main(cfg: DictConfig):
     with open(results_summary_path, 'w') as f:
         json.dump(results_summary, f, indent=2)
     
-    # Create checkpoint summary
-    summary_path = create_checkpoint_summary(custom_output_dir)
-    
     # Close wandb if used
     if wandb_logger is not None:
         wandb.finish()
@@ -333,7 +356,6 @@ def main(cfg: DictConfig):
     print("\n🎉 PARTOKEN RESUME TRAINING COMPLETED!")
     print("=" * 70)
     print(f"📊 Results summary: {results_summary_path}")
-    print(f"📋 Checkpoint summary: {summary_path}")
     print(f"🔍 Initial interpretability: {initial_interp_path}")
     
     # Print final results

@@ -82,9 +82,13 @@ class ParTokenResumeTrainingLightning(pl.LightningModule):
         # Ensure all parameters are trainable
         self.model.unfreeze_all()
         
+        # Ensure model is in training mode
+        self.model.train()
+        
         print(f"✓ Loss weights: λ_vq={lambda_vq:.1e}, λ_ent={lambda_ent:.1e}, λ_psc={lambda_psc:.1e}")
         print(f"✓ Training mode: Joint training (backbone + EMA codebook)")
         print(f"✓ Trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
+        print(f"✓ Model training mode: {self.model.training}")
         print(f"{'='*60}\n")
     
     def forward(self, h_V, edge_index, h_E, seq=None, batch=None):
@@ -233,7 +237,22 @@ class ParTokenResumeTrainingLightning(pl.LightningModule):
         
         return total_loss
     
-    def on_train_epoch_start(self):
+    def on_train_start(self):
+        """Ensure model is in training mode at the start of training."""
+        self.model.train()
+        print(f"\n🚀 Training started - Model training mode: {self.model.training}")
+        
+        # Double-check all modules are in training mode
+        eval_count = 0
+        for name, module in self.model.named_modules():
+            if hasattr(module, 'training') and not module.training:
+                eval_count += 1
+        
+        if eval_count > 0:
+            print(f"⚠️  {eval_count} modules still in eval mode at training start")
+            print("   This may cause PyTorch Lightning warnings but shouldn't affect training.")
+        else:
+            print("✅ All modules are properly in training mode")
         """Handle epoch-based updates."""
         # Update model epoch-based parameters (tau annealing, etc.)
         self.model.update_epoch()

@@ -11,9 +11,9 @@ hydra:
 resume:
   partgvp_checkpoint_path: null  # Must be provided via command line
   initialize_codebook: true
-  kmeans_max_batches: 50
+  kmeans_max_batches: 15
   validation_split: 0.1
-  load_model_config_from_checkpoint: true  # Load model config from checkpoint to avoid mismatch
+  load_model_config_from_checkpoint: true 
 
 # Data configuration
 data:
@@ -61,8 +61,8 @@ model:
 multistage:
   stage0:
     name: joint_training
-    epochs: 10
-    lr: 0.00005
+    epochs: 30
+    lr: 1e-4
     freeze_backbone: false
     loss_weights:
       lambda_vq: 1.0
