@@ -428,7 +428,18 @@ def create_partoken_resume_model_from_checkpoint(
         if 'model_cfg' in hparams:
             # Update model_cfg with values from checkpoint
             checkpoint_model_cfg = hparams['model_cfg']
+            
+            # Codebook parameters should NOT be loaded from checkpoint - use config values
+            codebook_keys = [
+                'codebook_size', 'codebook_dim', 'codebook_beta', 'codebook_decay',
+                'codebook_eps', 'codebook_distance', 'codebook_cosine_normalize',
+                'lambda_vq', 'lambda_ent', 'lambda_psc', 'lambda_card', 'psc_temp'
+            ]
+            
             for key, value in checkpoint_model_cfg.items():
+                if key in codebook_keys:
+                    print(f"  • Skipping {key}: {value} (using config value)")
+                    continue
                 if hasattr(model_cfg, key):
                     setattr(model_cfg, key, value)
                     print(f"  • Updated {key}: {value}")
@@ -449,12 +460,33 @@ def create_partoken_resume_model_from_checkpoint(
     
     # Load the PartGVP model to get the exact architecture
     from train_lightling import PartGVPLightning
+    
+    # Temporarily use checkpoint's codebook_size for loading PartGVP model
+    original_codebook_size = getattr(model_cfg, 'codebook_size', None)
+    checkpoint_codebook_size = None
+    
+    if 'hyper_parameters' in checkpoint:
+        hparams = checkpoint['hyper_parameters']
+        if 'model_cfg' in hparams and 'codebook_size' in hparams['model_cfg']:
+            checkpoint_codebook_size = hparams['model_cfg']['codebook_size']
+        elif 'codebook_size' in hparams:
+            checkpoint_codebook_size = hparams['codebook_size']
+    
+    if checkpoint_codebook_size is not None:
+        model_cfg.codebook_size = checkpoint_codebook_size
+        print(f"  • Temporarily using checkpoint codebook_size: {checkpoint_codebook_size} for PartGVP loading")
+    
     partgvp_model = PartGVPLightning.load_from_checkpoint(
         partgvp_checkpoint_path,
         model_cfg=model_cfg,
         train_cfg=train_cfg,
         num_classes=num_classes
     )
+    
+    # Restore original codebook_size for ParToken model creation
+    if original_codebook_size is not None:
+        model_cfg.codebook_size = original_codebook_size
+        print(f"  • Restored config codebook_size: {original_codebook_size} for ParToken model")
     
     print(f"✓ PartGVP model loaded successfully")
     print(f"  • Architecture: {sum(p.numel() for p in partgvp_model.parameters()):,} parameters")
