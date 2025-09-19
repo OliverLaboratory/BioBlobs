@@ -424,7 +424,7 @@ class ParTokenModel(nn.Module):
             return predictions, probabilities, cluster_importance, stats
         
     @torch.no_grad()
-    def extract_pre_gcn_clusters(
+    def extract_cluster_embeddings(
         self,
         h_V: Tuple[torch.Tensor, torch.Tensor],
         edge_index: torch.Tensor,
@@ -433,7 +433,7 @@ class ParTokenModel(nn.Module):
         batch: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Extract pre-GCN cluster embeddings and their validity mask (no quantization).
+        Extract embeddings and their validity mask (no quantization).
 
         Args:
             h_V: Node features (scalar, vector)
@@ -443,7 +443,7 @@ class ParTokenModel(nn.Module):
             batch: Batch vector
 
         Returns:
-            cluster_features: [B, S, ns] pre-GCN cluster embeddings
+            cluster_features: [B, S, ns] cluster embeddings
             cluster_valid_mask: [B, S] boolean mask for non-empty clusters
         """
         if seq is not None and self.seq_in:
@@ -505,7 +505,7 @@ class ParTokenModel(nn.Module):
             h_E = (batch_data.edge_s, batch_data.edge_v)
             batch = batch_data.batch
 
-            clusters, mask = self.extract_pre_gcn_clusters(h_V, edge_index, h_E, batch=batch)
+            clusters, mask = self.extract_cluster_embeddings(h_V, edge_index, h_E, batch=batch)
             if mask.any():
                 samples.append(clusters[mask].detach().cpu())
                 n_seen += int(mask.sum().item())
@@ -789,7 +789,7 @@ def demonstrate_model():
     # === 5. PRE-GCN CLUSTER EXTRACTION ===
     print("\n🔍 Pre-GCN Cluster Analysis:")
     with torch.no_grad():
-        cluster_features, cluster_mask = model.extract_pre_gcn_clusters(
+        cluster_features, cluster_mask = model.extract_cluster_embeddings(
             h_V, edge_index, h_E, batch=batch
         )
         
