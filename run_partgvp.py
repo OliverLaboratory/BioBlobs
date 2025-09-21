@@ -119,11 +119,13 @@ def main(cfg: DictConfig):
     # Create PartGVP model - choose appropriate class based on dataset
     if cfg.data.dataset_name == "geneontology":
         print("🧬 Using PartGVPMultiLabelLightning for multi-label Gene Ontology classification")
-        model = PartGVPMultiLabelLightning(cfg.model, cfg.train, num_classes)
+        model_class = PartGVPMultiLabelLightning
+        model = model_class(cfg.model, cfg.train, num_classes)
         model_type = "PartGVP Multi-Label"
     else:
         print("🧬 Using PartGVPLightning for single-label classification")
-        model = PartGVPLightning(cfg.model, cfg.train, num_classes)
+        model_class = PartGVPLightning
+        model = model_class(cfg.model, cfg.train, num_classes)
         model_type = "PartGVP"
 
     print("\n🏗️  Model Architecture:")
@@ -202,7 +204,7 @@ def main(cfg: DictConfig):
     if best_checkpoint_path and os.path.exists(best_checkpoint_path):
         best_results, best_model = test_checkpoint(
             best_checkpoint_path,
-            PartGVPLightning,
+            model_class,  # Use the same model class as training
             cfg.model,
             cfg.train,
             num_classes,
@@ -220,7 +222,7 @@ def main(cfg: DictConfig):
     if last_checkpoint_path and os.path.exists(last_checkpoint_path):
         last_results, _ = test_checkpoint(
             last_checkpoint_path,
-            PartGVPLightning,
+            model_class,  # Use the same model class as training
             cfg.model,
             cfg.train,
             num_classes,

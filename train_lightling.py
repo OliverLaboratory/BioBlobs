@@ -308,15 +308,20 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
         
         logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
         
+        # Fix label shape for multi-label: PyTorch Geometric concatenates but we need to stack
+        batch_size = logits.size(0)
+        num_classes = logits.size(1)
+        labels = batch.y.view(batch_size, num_classes).float()
+        
         # Multi-label classification loss
-        bce_loss = self.criterion(logits, batch.y)
+        bce_loss = self.criterion(logits, labels)
         total_loss = bce_loss
         
         # Compute metrics using sigmoid probabilities
         probs = torch.sigmoid(logits)
         
         # Convert to numpy for FMax computation
-        y_true_np = batch.y.cpu().numpy()
+        y_true_np = labels.cpu().numpy()
         y_pred_np = probs.detach().cpu().numpy()
         
         # Compute FMax metrics
@@ -329,8 +334,6 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
             fmax_score = 0.0
             precision_score = 0.0
             recall_score = 0.0
-        
-        batch_size = batch.y.size(0)
         
         # Log metrics
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, batch_size=batch_size)
@@ -355,15 +358,18 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
         
         logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
         
-        bce_loss = self.criterion(logits, batch.y)
+        # Fix label shape for multi-label: PyTorch Geometric concatenates but we need to stack
+        batch_size = logits.size(0)
+        num_classes = logits.size(1)
+        labels = batch.y.view(batch_size, num_classes).float()
+        
+        bce_loss = self.criterion(logits, labels)
         total_loss = bce_loss
         
         # Store predictions and targets for epoch-level metrics
         probs = torch.sigmoid(logits)
         self.val_predictions.append(probs.detach().cpu())
-        self.val_targets.append(batch.y.cpu())
-        
-        batch_size = batch.y.size(0)
+        self.val_targets.append(labels.cpu())
         
         self.log('val_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
         self.log('val_bce_loss', bce_loss, on_step=False, on_epoch=True, batch_size=batch_size)
@@ -384,15 +390,18 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
         
         logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
         
-        bce_loss = self.criterion(logits, batch.y)
+        # Fix label shape for multi-label: PyTorch Geometric concatenates but we need to stack
+        batch_size = logits.size(0)
+        num_classes = logits.size(1)
+        labels = batch.y.view(batch_size, num_classes).float()
+        
+        bce_loss = self.criterion(logits, labels)
         total_loss = bce_loss
         
         # Store predictions and targets for epoch-level metrics
         probs = torch.sigmoid(logits)
         self.test_predictions.append(probs.detach().cpu())
-        self.test_targets.append(batch.y.cpu())
-        
-        batch_size = batch.y.size(0)
+        self.test_targets.append(labels.cpu())
         
         self.log('test_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
         self.log('test_bce_loss', bce_loss, on_step=False, on_epoch=True, batch_size=batch_size)
@@ -414,17 +423,18 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
             
             # Compute epoch-level FMax metrics
             try:
-                metrics = self.fmax_metric.compute_metrics(all_targets, all_predictions)
+                fmax = self.fmax_metric.fmax(all_targets, all_predictions)
+                precision = self.fmax_metric.precision(all_targets, all_predictions)
+                recall = self.fmax_metric.recall(all_targets, all_predictions)
                 
-                self.log('val_fmax', metrics['fmax'], prog_bar=True)
-                self.log('val_precision', metrics['best_precision'])
-                self.log('val_recall', metrics['best_recall'])
-                self.log('val_best_threshold', metrics['best_threshold'])
+                self.log('val_fmax', fmax, prog_bar=True)
+                self.log('val_precision', precision)
+                self.log('val_recall', recall)
                 
                 # Print validation results
                 val_loss = self.trainer.callback_metrics.get('val_loss', 0.0)
-                print(f"[PARTGVP-ML] Epoch {self.current_epoch:3d} | Val Loss: {val_loss:.4f} | Val FMax: {metrics['fmax']:.4f}")
-                print(f"{'':18} | Val Prec: {metrics['best_precision']:.4f} | Val Rec:  {metrics['best_recall']:.4f}")
+                print(f"[PARTGVP-ML] Epoch {self.current_epoch:3d} | Val Loss: {val_loss:.4f} | Val FMax: {fmax:.4f}")
+                print(f"{'':18} | Val Prec: {precision:.4f} | Val Rec:  {recall:.4f}")
                 
             except Exception as e:
                 print(f"Warning: Could not compute validation FMax metrics: {e}")
@@ -446,18 +456,18 @@ class PartGVPMultiLabelLightning(PartGVPLightning):
             
             # Compute epoch-level FMax metrics
             try:
-                metrics = self.fmax_metric.compute_metrics(all_targets, all_predictions)
+                fmax = self.fmax_metric.fmax(all_targets, all_predictions)
+                precision = self.fmax_metric.precision(all_targets, all_predictions)
+                recall = self.fmax_metric.recall(all_targets, all_predictions)
                 
-                self.log('test_fmax', metrics['fmax'])
-                self.log('test_precision', metrics['best_precision'])
-                self.log('test_recall', metrics['best_recall'])
-                self.log('test_best_threshold', metrics['best_threshold'])
+                self.log('test_fmax', fmax)
+                self.log('test_precision', precision)
+                self.log('test_recall', recall)
                 
                 print("🏆 Test Results:")
-                print(f"   FMax: {metrics['fmax']:.4f}")
-                print(f"   Best Precision: {metrics['best_precision']:.4f}")
-                print(f"   Best Recall: {metrics['best_recall']:.4f}")
-                print(f"   Best Threshold: {metrics['best_threshold']:.3f}")
+                print(f"   FMax: {fmax:.4f}")
+                print(f"   Best Precision: {precision:.4f}")
+                print(f"   Best Recall: {recall:.4f}")
                 
             except Exception as e:
                 print(f"Warning: Could not compute test FMax metrics: {e}")
