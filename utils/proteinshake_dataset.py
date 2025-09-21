@@ -509,6 +509,16 @@ def get_dataset(
             task.test_index,
         )
 
+    elif dataset_name == "geneontology":
+        # Import and use the gene ontology dataset function
+        from utils.gene_ontology import get_gene_ontology_dataset
+        return get_gene_ontology_dataset(
+            split=split, 
+            split_similarity_threshold=split_similarity_threshold, 
+            data_dir=data_dir, 
+            test_mode=test_mode
+        )
+
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 

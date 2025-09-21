@@ -14,7 +14,7 @@ from utils.interpretability import (
     save_interpretability_results,
 )
 from utils.save_checkpoints import create_checkpoint_summary
-from train_lightling import PartGVPLightning
+from train_lightling import PartGVPLightning, PartGVPMultiLabelLightning
 import json
 
 
@@ -52,19 +52,29 @@ def test_checkpoint(
     result = {
         "checkpoint_type": checkpoint_type,
         "checkpoint_path": str(checkpoint_path),
-        "test_accuracy": test_results[0]["test_acc"],
         "test_loss": test_results[0]["test_loss"],
-        "test_ce_loss": test_results[0]["test_ce_loss"],
     }
+    
+    # Add dataset-specific metrics
+    if "test_acc" in test_results[0]:
+        # Single-label classification
+        result["test_accuracy"] = test_results[0]["test_acc"]
+        result["test_ce_loss"] = test_results[0]["test_ce_loss"]
+        print(f"✓ {checkpoint_type.title()} checkpoint test accuracy: {result['test_accuracy']:.4f}")
+    elif "test_fmax" in test_results[0]:
+        # Multi-label classification
+        result["test_fmax"] = test_results[0]["test_fmax"]
+        result["test_precision"] = test_results[0]["test_precision"]
+        result["test_recall"] = test_results[0]["test_recall"]
+        result["test_bce_loss"] = test_results[0]["test_bce_loss"]
+        print(f"✓ {checkpoint_type.title()} checkpoint test FMax: {result['test_fmax']:.4f}")
+    else:
+        print("⚠️ Unknown test metrics format")
 
     # Add importance metrics if available
     if "test_importance_max" in test_results[0]:
         result["test_importance_max"] = test_results[0]["test_importance_max"]
         result["test_importance_entropy"] = test_results[0]["test_importance_entropy"]
-
-    print(
-        f"✓ {checkpoint_type.title()} checkpoint test accuracy: {result['test_accuracy']:.4f}"
-    )
 
     return result, model
 
@@ -106,15 +116,22 @@ def main(cfg: DictConfig):
         test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False
     )
 
-    # Create PartGVP model
-    model = PartGVPLightning(cfg.model, cfg.train, num_classes)
+    # Create PartGVP model - choose appropriate class based on dataset
+    if cfg.data.dataset_name == "geneontology":
+        print("🧬 Using PartGVPMultiLabelLightning for multi-label Gene Ontology classification")
+        model = PartGVPMultiLabelLightning(cfg.model, cfg.train, num_classes)
+        model_type = "PartGVP Multi-Label"
+    else:
+        print("🧬 Using PartGVPLightning for single-label classification")
+        model = PartGVPLightning(cfg.model, cfg.train, num_classes)
+        model_type = "PartGVP"
 
     print("\n🏗️  Model Architecture:")
     print(f"  • Total parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(
         f"  • Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
     )
-    print("  • Mode: PartGVP (bypass codebook)")
+    print(f"  • Mode: {model_type} (bypass codebook)")
 
     # Logger
     wandb_logger = None
@@ -126,13 +143,20 @@ def main(cfg: DictConfig):
             tags=["partgvp", cfg.data.dataset_name, cfg.data.split],
         )
 
-    # Checkpoint callback
+    # Checkpoint callback - use appropriate metric based on task type
+    if cfg.data.dataset_name == "geneontology":
+        filename_template = "best-partgvp-{epoch:02d}-{val_fmax:.3f}"
+        monitor_metric = "val_fmax"
+    else:
+        filename_template = "best-partgvp-{epoch:02d}-{val_acc:.3f}"
+        monitor_metric = "val_acc"
+    
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_acc",
+        monitor=monitor_metric,
         mode="max",
         save_top_k=1,
         dirpath=custom_output_dir,
-        filename="best-partgvp-{epoch:02d}-{val_acc:.3f}",
+        filename=filename_template,
         save_last=True,
     )
 
@@ -280,13 +304,20 @@ def main(cfg: DictConfig):
 
     # Print final results summary
     if "best" in results_summary["checkpoints"]:
-        print(
-            f"🏆 Best checkpoint test accuracy: {results_summary['checkpoints']['best']['test_accuracy']:.4f}"
-        )
+        best_checkpoint = results_summary['checkpoints']['best']
+        if "test_accuracy" in best_checkpoint:
+            print(f"🏆 Best checkpoint test accuracy: {best_checkpoint['test_accuracy']:.4f}")
+        elif "test_fmax" in best_checkpoint:
+            print(f"🏆 Best checkpoint test FMax: {best_checkpoint['test_fmax']:.4f}")
+            print(f"   Best precision: {best_checkpoint['test_precision']:.4f}")
+            print(f"   Best recall: {best_checkpoint['test_recall']:.4f}")
+    
     if "last" in results_summary["checkpoints"]:
-        print(
-            f"📈 Last checkpoint test accuracy: {results_summary['checkpoints']['last']['test_accuracy']:.4f}"
-        )
+        last_checkpoint = results_summary['checkpoints']['last']
+        if "test_accuracy" in last_checkpoint:
+            print(f"📈 Last checkpoint test accuracy: {last_checkpoint['test_accuracy']:.4f}")
+        elif "test_fmax" in last_checkpoint:
+            print(f"📈 Last checkpoint test FMax: {last_checkpoint['test_fmax']:.4f}")
 
     if results_summary["interpretability"]["enabled"]:
         print("🔍 Interpretability analysis completed")

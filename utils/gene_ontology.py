@@ -71,11 +71,11 @@ def create_dataloader(dataset, batch_size=128, num_workers=0, shuffle=True):
     )
 
 
-class ProteinClassificationDataset(data.Dataset):
+class ProteinMultiLabelDataset(data.Dataset):
     """
-    A map-style `torch.utils.data.Dataset` for protein classification tasks.
+    A map-style `torch.utils.data.Dataset` for protein multi-label classification tasks.
     Transforms JSON/dictionary-style protein structures into featurized protein graphs
-    with protein-wise labels for classification.
+    with protein-wise multi-label labels for classification.
 
     Expected data format:
     [
@@ -83,12 +83,12 @@ class ProteinClassificationDataset(data.Dataset):
             "name": "protein_id",
             "seq": "SEQUENCE",
             "coords": [[[x,y,z],...], ...],
-            "label": class_id  # Integer label for classification
+            "label": bool_array  # Boolean array for multi-label classification
         },
         ...
     ]
 
-    Returns graphs with additional 'y' attribute for classification labels.
+    Returns graphs with additional 'y' attribute for multi-label classification labels.
     """
 
     def __init__(
@@ -100,7 +100,7 @@ class ProteinClassificationDataset(data.Dataset):
         num_rbf=16,
         device="cpu",
     ):
-        super(ProteinClassificationDataset, self).__init__()
+        super(ProteinMultiLabelDataset, self).__init__()
 
         self.data_list = data_list
         self.top_k = top_k
@@ -204,9 +204,18 @@ class ProteinClassificationDataset(data.Dataset):
                 torch.nan_to_num, (node_s, node_v, edge_s, edge_v)
             )
 
-            # Add classification label
-            label = protein.get("label", 0)
-            y = torch.tensor(label, dtype=torch.long, device=self.device)
+            # Add multi-label classification label
+            label = protein.get("label", None)
+            if label is not None:
+                # Convert boolean array to float tensor for multi-label classification
+                if isinstance(label, np.ndarray):
+                    y = torch.tensor(label, dtype=torch.float32, device=self.device)
+                else:
+                    # Fallback for single-label case
+                    y = torch.tensor(label, dtype=torch.long, device=self.device)
+            else:
+                # Default empty multi-label (all zeros)
+                y = torch.zeros(self.num_classes, dtype=torch.float32, device=self.device)
 
         data = torch_geometric.data.Data(
             x=X_ca,
@@ -351,6 +360,11 @@ def get_gene_ontology_dataset(
             
         print(f"Loaded {len(train_structures)} train, {len(val_structures)} val, {len(test_structures)} test structures")
         
+        # Create datasets from loaded structures
+        train_dataset = ProteinMultiLabelDataset(train_structures, num_classes=len(token_map), device="cpu")
+        val_dataset = ProteinMultiLabelDataset(val_structures, num_classes=len(token_map), device="cpu")
+        test_dataset = ProteinMultiLabelDataset(test_structures, num_classes=len(token_map), device="cpu")
+        
     else:
         print("Converting proteins to structures with proper splitting...")
         
@@ -371,10 +385,59 @@ def get_gene_ontology_dataset(
         # Build token_map from all proteins to ensure all labels are included
         print("\nBuilding token map from all proteins...")
 
-
         train_generator = create_split_generator(all_proteins, train_index)
         val_generator = create_split_generator(all_proteins, val_index)
         test_generator = create_split_generator(all_proteins, test_index)
+
+        # Convert each split to structures
+        print("Converting train split...")
+        train_structures, _, _ = generator_to_structures(train_generator, "geneontology", token_map, train_index)
+        
+        print("Converting validation split...")
+        val_structures, _, _ = generator_to_structures(val_generator, "geneontology", token_map, val_index)
+        
+        print("Converting test split...")
+        test_structures, _, _ = generator_to_structures(test_generator, "geneontology", token_map, test_index)
+
+        # Save structures to JSON files
+        print("Saving structures to JSON files...")
+        with open(train_json_path, "w") as f:
+            json.dump(train_structures, f)
+        with open(val_json_path, "w") as f:
+            json.dump(val_structures, f)
+        with open(test_json_path, "w") as f:
+            json.dump(test_structures, f)
+        with open(token_map_path, "w") as f:
+            json.dump(token_map, f)
+
+        # Create datasets from structures
+        train_dataset = ProteinMultiLabelDataset(train_structures, num_classes=len(token_map), device="cpu")
+        val_dataset = ProteinMultiLabelDataset(val_structures, num_classes=len(token_map), device="cpu")
+        test_dataset = ProteinMultiLabelDataset(test_structures, num_classes=len(token_map), device="cpu")
+
+    # Apply test mode if requested
+    if test_mode:
+        print("🔬 TEST MODE: Limiting dataset sizes")
+        train_limit = min(100, len(train_dataset))
+        val_limit = min(20, len(val_dataset))
+        test_limit = min(20, len(test_dataset))
+        
+        # Create subset datasets
+        train_indices = list(range(train_limit))
+        val_indices = list(range(val_limit))
+        test_indices = list(range(test_limit))
+        
+        train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+        val_dataset = torch.utils.data.Subset(val_dataset, val_indices)
+        test_dataset = torch.utils.data.Subset(test_dataset, test_indices)
+        
+        print(f"Test mode datasets: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test")
+
+    print("\n✅ Dataset loading completed!")
+    print(f"📊 Final sizes: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test")
+    print(f"🏷️  Number of classes: {len(token_map)}")
+    
+    return train_dataset, val_dataset, test_dataset, len(token_map)
 
 
 
@@ -416,7 +479,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
     print("Collecting data...")
     for i, protein_data in enumerate(tqdm(generator, desc="Collecting data")):
-        temp_data.append((protein_data, original_indices[i] if original_indices else i))
+        temp_data.append((protein_data, original_indices[i] if original_indices is not None else i))
 
     print("Processing structures...")
     for protein_data, original_idx in tqdm(temp_data, desc="Converting proteins"):
@@ -430,7 +493,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
         # Get label
         tokens = [token_map[i] for i in pinfo['molecular_function']]
-        label = np.zeros_like(list(token_map.keys()), dtype=bool)
+        label = np.zeros(len(token_map), dtype=bool)
         label[tokens] = True
         
         # Extract coordinates and atom info
@@ -510,7 +573,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
                 "name": name,
                 "seq": adjusted_seq,
                 "coords": coords,
-                "label": label,
+                "label": label.tolist(),  # Convert numpy boolean array to Python list
             }
         )
 

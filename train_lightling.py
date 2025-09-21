@@ -1,6 +1,7 @@
 import pytorch_lightning as pl
 from partoken_model import ParTokenModel
 from utils.lr_schedule import get_cosine_schedule_with_warmup
+from utils.fmax_metric import FMaxMetric
 import torch
 import torch.nn as nn
 from typing import Dict, Optional
@@ -273,3 +274,202 @@ class PartGVPLightning(pl.LightningModule):
             }
         else:
             return optimizer
+
+
+class PartGVPMultiLabelLightning(PartGVPLightning):
+    """PartGVP Lightning module for multi-label classification (Gene Ontology dataset).
+    
+    This class extends PartGVPLightning to handle multi-label classification with:
+    - BCEWithLogitsLoss instead of CrossEntropyLoss
+    - FMax metric instead of accuracy
+    - Updated logging for multi-label metrics
+    """
+    
+    def __init__(self, model_cfg, train_cfg, num_classes):
+        super().__init__(model_cfg, train_cfg, num_classes)
+        
+        # Replace criterion for multi-label classification
+        self.criterion = nn.BCEWithLogitsLoss()
+        
+        # Initialize FMax metric
+        self.fmax_metric = FMaxMetric()
+        self.num_classes = num_classes
+        
+        # Track accumulated predictions and targets for epoch-level metrics
+        self.val_predictions = []
+        self.val_targets = []
+        self.test_predictions = []
+        self.test_targets = []
+    
+    def training_step(self, batch, batch_idx):
+        h_V = (batch.node_s, batch.node_v)
+        h_E = (batch.edge_s, batch.edge_v)
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'sequence_embedding') else None
+        
+        logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
+        
+        # Multi-label classification loss
+        bce_loss = self.criterion(logits, batch.y)
+        total_loss = bce_loss
+        
+        # Compute metrics using sigmoid probabilities
+        probs = torch.sigmoid(logits)
+        
+        # Convert to numpy for FMax computation
+        y_true_np = batch.y.cpu().numpy()
+        y_pred_np = probs.detach().cpu().numpy()
+        
+        # Compute FMax metrics
+        try:
+            fmax_score = self.fmax_metric.fmax(y_true_np, y_pred_np)
+            precision_score = self.fmax_metric.precision(y_true_np, y_pred_np, 0.5)
+            recall_score = self.fmax_metric.recall(y_true_np, y_pred_np, 0.5)
+        except Exception:
+            # Fallback in case of numerical issues
+            fmax_score = 0.0
+            precision_score = 0.0
+            recall_score = 0.0
+        
+        batch_size = batch.y.size(0)
+        
+        # Log metrics
+        self.log('train_loss', total_loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_bce_loss', bce_loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_fmax', fmax_score, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_precision', precision_score, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_recall', recall_score, on_step=True, on_epoch=True, batch_size=batch_size)
+        
+        # Log cluster statistics
+        if cluster_importance is not None:
+            max_importance = cluster_importance.max(dim=1)[0].mean()
+            importance_entropy = -(cluster_importance * torch.log(cluster_importance + 1e-8)).sum(dim=1).mean()
+            self.log('train_importance_max', max_importance, on_step=True, on_epoch=True, batch_size=batch_size)
+            self.log('train_importance_entropy', importance_entropy, on_step=True, on_epoch=True, batch_size=batch_size)
+        
+        return total_loss
+    
+    def validation_step(self, batch, batch_idx):
+        h_V = (batch.node_s, batch.node_v)
+        h_E = (batch.edge_s, batch.edge_v)
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'sequence_embedding') else None
+        
+        logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
+        
+        bce_loss = self.criterion(logits, batch.y)
+        total_loss = bce_loss
+        
+        # Store predictions and targets for epoch-level metrics
+        probs = torch.sigmoid(logits)
+        self.val_predictions.append(probs.detach().cpu())
+        self.val_targets.append(batch.y.cpu())
+        
+        batch_size = batch.y.size(0)
+        
+        self.log('val_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_bce_loss', bce_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        # Log cluster statistics
+        if cluster_importance is not None:
+            max_importance = cluster_importance.max(dim=1)[0].mean()
+            importance_entropy = -(cluster_importance * torch.log(cluster_importance + 1e-8)).sum(dim=1).mean()
+            self.log('val_importance_max', max_importance, on_step=False, on_epoch=True, batch_size=batch_size)
+            self.log('val_importance_entropy', importance_entropy, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        return total_loss
+    
+    def test_step(self, batch, batch_idx):
+        h_V = (batch.node_s, batch.node_v)
+        h_E = (batch.edge_s, batch.edge_v)
+        seq = batch.seq if hasattr(batch, 'seq') and hasattr(self.model, 'sequence_embedding') else None
+        
+        logits, assignment_matrix, cluster_importance, extra = self.forward(h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch)
+        
+        bce_loss = self.criterion(logits, batch.y)
+        total_loss = bce_loss
+        
+        # Store predictions and targets for epoch-level metrics
+        probs = torch.sigmoid(logits)
+        self.test_predictions.append(probs.detach().cpu())
+        self.test_targets.append(batch.y.cpu())
+        
+        batch_size = batch.y.size(0)
+        
+        self.log('test_loss', total_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('test_bce_loss', bce_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        # Log importance statistics if available
+        if cluster_importance is not None:
+            max_importance = cluster_importance.max(dim=1)[0].mean()
+            importance_entropy = -(cluster_importance * torch.log(cluster_importance + 1e-8)).sum(dim=1).mean()
+            self.log('test_importance_max', max_importance, on_step=False, on_epoch=True, batch_size=batch_size)
+            self.log('test_importance_entropy', importance_entropy, on_step=False, on_epoch=True, batch_size=batch_size)
+        
+        return total_loss
+    
+    def on_validation_epoch_end(self):
+        if self.val_predictions and self.val_targets:
+            # Concatenate all predictions and targets
+            all_predictions = torch.cat(self.val_predictions, dim=0).numpy()
+            all_targets = torch.cat(self.val_targets, dim=0).numpy()
+            
+            # Compute epoch-level FMax metrics
+            try:
+                metrics = self.fmax_metric.compute_metrics(all_targets, all_predictions)
+                
+                self.log('val_fmax', metrics['fmax'], prog_bar=True)
+                self.log('val_precision', metrics['best_precision'])
+                self.log('val_recall', metrics['best_recall'])
+                self.log('val_best_threshold', metrics['best_threshold'])
+                
+                # Print validation results
+                val_loss = self.trainer.callback_metrics.get('val_loss', 0.0)
+                print(f"[PARTGVP-ML] Epoch {self.current_epoch:3d} | Val Loss: {val_loss:.4f} | Val FMax: {metrics['fmax']:.4f}")
+                print(f"{'':18} | Val Prec: {metrics['best_precision']:.4f} | Val Rec:  {metrics['best_recall']:.4f}")
+                
+            except Exception as e:
+                print(f"Warning: Could not compute validation FMax metrics: {e}")
+                self.log('val_fmax', 0.0)
+                self.log('val_precision', 0.0)
+                self.log('val_recall', 0.0)
+            
+            # Clear accumulated data
+            self.val_predictions.clear()
+            self.val_targets.clear()
+        
+        print("-" * 75)
+    
+    def on_test_epoch_end(self):
+        if self.test_predictions and self.test_targets:
+            # Concatenate all predictions and targets
+            all_predictions = torch.cat(self.test_predictions, dim=0).numpy()
+            all_targets = torch.cat(self.test_targets, dim=0).numpy()
+            
+            # Compute epoch-level FMax metrics
+            try:
+                metrics = self.fmax_metric.compute_metrics(all_targets, all_predictions)
+                
+                self.log('test_fmax', metrics['fmax'])
+                self.log('test_precision', metrics['best_precision'])
+                self.log('test_recall', metrics['best_recall'])
+                self.log('test_best_threshold', metrics['best_threshold'])
+                
+                print("🏆 Test Results:")
+                print(f"   FMax: {metrics['fmax']:.4f}")
+                print(f"   Best Precision: {metrics['best_precision']:.4f}")
+                print(f"   Best Recall: {metrics['best_recall']:.4f}")
+                print(f"   Best Threshold: {metrics['best_threshold']:.3f}")
+                
+            except Exception as e:
+                print(f"Warning: Could not compute test FMax metrics: {e}")
+                self.log('test_fmax', 0.0)
+                self.log('test_precision', 0.0)
+                self.log('test_recall', 0.0)
+            
+            # Clear accumulated data
+            self.test_predictions.clear()
+            self.test_targets.clear()
+    
+    def on_train_epoch_end(self):
+        train_loss = self.trainer.callback_metrics.get('train_loss_epoch', 0.0)
+        train_fmax = self.trainer.callback_metrics.get('train_fmax_epoch', 0.0)
+        print(f"[PARTGVP-ML] Epoch {self.current_epoch:3d} | Train Loss: {train_loss:.4f} | Train FMax: {train_fmax:.4f}")
