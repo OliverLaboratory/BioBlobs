@@ -1,16 +1,18 @@
-import json
-import numpy as np
 from tqdm import tqdm
-import torch
-import math
+import json
+import os
+from proteinshake.tasks import GeneOntologyTask
 import torch.utils.data as data
 import torch.nn.functional as F
 import torch_geometric
 import torch_cluster
+import torch
 from torch_geometric.loader import DataLoader
-import os
-from collections import defaultdict
+import numpy as np
 from math import inf
+import math
+from collections import defaultdict
+
 
 def _get_label_key(pinfo, dataset_name):
     """
@@ -31,6 +33,7 @@ def _get_label_key(pinfo, dataset_name):
         return pinfo["SCOP-FA"]
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
+
 
 def _normalize(tensor, dim=-1):
     """
@@ -277,6 +280,104 @@ class ProteinClassificationDataset(data.Dataset):
 
 
 
+
+
+def get_gene_ontology_dataset(
+    split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
+):
+    """
+    Get train, validation, and test datasets for the specified protein classification task.
+    
+    This function splits the data BEFORE converting to structures to preserve correct indices
+    and avoid issues with filtering during conversion.
+
+    Args:
+        split (str): Split method ('random', 'sequence', 'structure')
+        split_similarity_threshold (float): Similarity threshold for splitting
+        data_dir (str): Directory to store/load data files
+        test_mode (bool): If True, limit datasets to small sizes for testing (100 train, 20 val, 20 test)
+
+    Returns:
+        tuple: (train_dataset, val_dataset, test_dataset, num_classes)
+    """
+    # Load the appropriate task
+    task = GeneOntologyTask(
+        split=split, split_similarity_threshold=split_similarity_threshold, root=data_dir
+    )
+    token_map = task.token_map
+    num_classes = task.num_classes
+    dataset = task.dataset
+
+    train_index, val_index, test_index = (
+        task.train_index,
+        task.val_index,
+        task.test_index,
+    )
+
+    print(f"Token map has {len(token_map)}")
+    num_classes = len(token_map)
+
+    # Create data directory if it doesn't exist
+    data_dir = os.path.join(data_dir, "gene_ontology", split)
+    os.makedirs(data_dir, exist_ok=True)
+
+    # Check if JSON files already exist for all splits
+    train_json_path = os.path.join(data_dir, "gene_ontology_train.json")
+    val_json_path = os.path.join(data_dir, "gene_ontology_val.json")
+    test_json_path = os.path.join(data_dir, "gene_ontology_test.json")
+    token_map_path = os.path.join(data_dir, "gene_ontology_token_map.json")
+
+    # Paths for filtered indices
+    train_indices_path = os.path.join(data_dir, "gene_ontology_train_filtered_indices.json")
+    val_indices_path = os.path.join(data_dir, "gene_ontology_val_filtered_indices.json")
+    test_indices_path = os.path.join(data_dir, "gene_ontology_test_filtered_indices.json")
+
+    if (os.path.exists(train_json_path) and os.path.exists(val_json_path) and
+        os.path.exists(test_json_path) and os.path.exists(token_map_path)):
+        
+        print("JSON files for all splits already exist. Loading from files...")
+        
+        # Load token map
+        with open(token_map_path, "r") as f:
+            token_map = json.load(f)
+            
+        # Load structures for each split
+        with open(train_json_path, "r") as f:
+            train_structures = json.load(f)
+        with open(val_json_path, "r") as f:
+            val_structures = json.load(f)
+        with open(test_json_path, "r") as f:
+            test_structures = json.load(f)
+            
+        print(f"Loaded {len(train_structures)} train, {len(val_structures)} val, {len(test_structures)} test structures")
+        
+    else:
+        print("Converting proteins to structures with proper splitting...")
+        
+        # Get the full protein generator
+        protein_generator = dataset.proteins(resolution="atom")
+        print("Number of atom level proteins:", len(protein_generator))
+        
+        # Convert generator to list to enable indexing
+        all_proteins = list(protein_generator)
+        print(f"Loaded {len(all_proteins)} proteins into memory")
+        
+        # Create generators for each split using indices
+        def create_split_generator(protein_list, indices):
+            for idx in indices:
+                if idx < len(protein_list):
+                    yield protein_list[idx]
+        
+        # Build token_map from all proteins to ensure all labels are included
+        print("\nBuilding token map from all proteins...")
+
+
+        train_generator = create_split_generator(all_proteins, train_index)
+        val_generator = create_split_generator(all_proteins, val_index)
+        test_generator = create_split_generator(all_proteins, test_index)
+
+
+
 def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None, original_indices=None):
     """
     Convert generator of proteins to list of structures with name, sequence, and coordinates.
@@ -285,15 +386,17 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     Args:
         generator: Generator yielding protein data dictionaries
         dataset_name: Name of the dataset for label extraction
-        token_map: Pre-computed mapping from labels to integers (optional)
+        token_map: Pre-computed mapping from labels to integers (required)
         original_indices: List of original indices corresponding to the generator items (optional)
 
     Returns:
         tuple: (structures_list, token_map, filtered_indices) where structures_list contains dicts with 'name', 'seq', 'coords', 'label' keys
         and filtered_indices contains the original indices of proteins that passed filtering
     """
+    if token_map is None:
+        raise ValueError("token_map must be provided.")
+
     structures = []
-    labels_set = set()
     temp_data = []
     filtered_indices = []  # Track which original indices made it through filtering
 
@@ -311,23 +414,11 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     BACKBONE_SET = set(BACKBONE)
     MISSING = [inf, inf, inf]
 
-    # First pass: collect data and labels (only if token_map not provided)
-    print("First pass: collecting data and labels...")
+    print("Collecting data...")
     for i, protein_data in enumerate(tqdm(generator, desc="Collecting data")):
         temp_data.append((protein_data, original_indices[i] if original_indices else i))
-        if token_map is None:
-            labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
 
-    # Create label mapping if not provided
-    if token_map is None:
-        sorted_labels = sorted(labels_set)
-        token_map = {label: i for i, label in enumerate(sorted_labels)}
-        print(f"Found {len(sorted_labels)} unique labels: {sorted_labels}")
-    else:
-        print(f"Using provided token map with {len(token_map)} labels")
-
-    # Second pass: process the collected data
-    print("Second pass: processing structures...")
+    print("Processing structures...")
     for protein_data, original_idx in tqdm(temp_data, desc="Converting proteins"):
         filtering_stats["total_processed"] += 1
 
@@ -337,13 +428,16 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         name = pinfo["ID"]
         seq = pinfo["sequence"]
 
-        label_key = _get_label_key(pinfo, dataset_name)
-        if label_key not in token_map:
-            print(f"Warning: Label {label_key} not found in token_map for protein {name}")
-            continue
-        label = token_map[label_key]
+        # Get label
+        tokens = [token_map[i] for i in pinfo['molecular_function']]
+        label = np.zeros_like(list(token_map.keys()), dtype=bool)
+        label[tokens] = True
+        
+        # Extract coordinates and atom info
+        x = ainfo["x"]
+        y = ainfo["y"]
+        z = ainfo["z"]
 
-        x = ainfo["x"]; y = ainfo["y"]; z = ainfo["z"]
         atom_types = ainfo["atom_type"]
         residue_numbers = ainfo["residue_number"]
 
@@ -446,217 +540,9 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
     return structures, token_map, filtered_indices
 
-def get_dataset(
-    dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
-):
-    """
-    Get train, validation, and test datasets for the specified protein classification task.
-    
-    This function splits the data BEFORE converting to structures to preserve correct indices
-    and avoid issues with filtering during conversion.
 
-    Args:
-        dataset_name (str): Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
-        split (str): Split method ('random', 'sequence', 'structure')
-        split_similarity_threshold (float): Similarity threshold for splitting
-        data_dir (str): Directory to store/load data files
-        test_mode (bool): If True, limit datasets to small sizes for testing (100 train, 20 val, 20 test)
 
-    Returns:
-        tuple: (train_dataset, val_dataset, test_dataset, num_classes)
-    """
-    # Load the appropriate task
-    if dataset_name == "enzymecommission":
-        from proteinshake.tasks import EnzymeClassTask
-
-        task = EnzymeClassTask(
-            split=split, split_similarity_threshold=split_similarity_threshold, root=data_dir
-        )
-        dataset = task.dataset
-        print("Number of proteins:", task.size)
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    elif dataset_name == "proteinfamily":
-        from proteinshake.tasks import ProteinFamilyTask
-
-        task = ProteinFamilyTask(
-            split=split, split_similarity_threshold=split_similarity_threshold, root=data_dir
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    elif dataset_name == "scope":
-        from proteinshake.tasks import StructuralClassTask
-
-        task = StructuralClassTask(
-            split=split, split_similarity_threshold=split_similarity_threshold, root=data_dir
-        )
-        dataset = task.dataset
-        num_classes = task.num_classes
-        train_index, val_index, test_index = (
-            task.train_index,
-            task.val_index,
-            task.test_index,
-        )
-
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-
-    # Create data directory if it doesn't exist
-    data_dir = os.path.join(data_dir, dataset_name, split)
-    os.makedirs(data_dir, exist_ok=True)
-
-    # Check if JSON files already exist for all splits
-    train_json_path = os.path.join(data_dir, f"{dataset_name}_train.json")
-    val_json_path = os.path.join(data_dir, f"{dataset_name}_val.json")
-    test_json_path = os.path.join(data_dir, f"{dataset_name}_test.json")
-    token_map_path = os.path.join(data_dir, f"{dataset_name}_token_map.json")
-    
-    # Paths for filtered indices
-    train_indices_path = os.path.join(data_dir, f"{dataset_name}_train_filtered_indices.json")
-    val_indices_path = os.path.join(data_dir, f"{dataset_name}_val_filtered_indices.json")
-    test_indices_path = os.path.join(data_dir, f"{dataset_name}_test_filtered_indices.json")
-
-    if (os.path.exists(train_json_path) and os.path.exists(val_json_path) and
-        os.path.exists(test_json_path) and os.path.exists(token_map_path)):
-        
-        print("JSON files for all splits already exist. Loading from files...")
-        
-        # Load token map
-        with open(token_map_path, "r") as f:
-            token_map = json.load(f)
-            
-        # Load structures for each split
-        with open(train_json_path, "r") as f:
-            train_structures = json.load(f)
-        with open(val_json_path, "r") as f:
-            val_structures = json.load(f)
-        with open(test_json_path, "r") as f:
-            test_structures = json.load(f)
-            
-        print(f"Loaded {len(train_structures)} train, {len(val_structures)} val, {len(test_structures)} test structures")
-        
-    else:
-        print("Converting proteins to structures with proper splitting...")
-        
-        # Get the full protein generator
-        protein_generator = dataset.proteins(resolution="atom")
-        print("Number of atom level proteins:", len(protein_generator))
-        
-        # Convert generator to list to enable indexing
-        all_proteins = list(protein_generator)
-        print(f"Loaded {len(all_proteins)} proteins into memory")
-        
-        # Create generators for each split using indices
-        def create_split_generator(protein_list, indices):
-            for idx in indices:
-                if idx < len(protein_list):
-                    yield protein_list[idx]
-        
-        # Build token_map from all proteins to ensure all labels are included
-        print("\nBuilding token map from all proteins...")
-        labels_set = set()
-        for protein_data in tqdm(all_proteins, desc="Collecting all labels"):
-            labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
-        sorted_labels = sorted(labels_set)
-        token_map = {label: i for i, label in enumerate(sorted_labels)}
-        print(f"Token map created with {len(token_map)} classes: {token_map}")
-                
-        # Now convert each split using the same token mapping
-        print("\nConverting training split...")
-        train_generator = create_split_generator(all_proteins, train_index)
-        train_structures, _, train_filtered_indices = generator_to_structures(train_generator, dataset_name=dataset_name, token_map=token_map, original_indices=list(train_index))
-
-        print("\nConverting validation split...")
-        val_generator = create_split_generator(all_proteins, val_index)
-        val_structures, _, val_filtered_indices = generator_to_structures(val_generator, dataset_name=dataset_name, token_map=token_map, original_indices=list(val_index))
-        
-        print("\nConverting test split...")
-        test_generator = create_split_generator(all_proteins, test_index)
-        test_structures, _, test_filtered_indices = generator_to_structures(test_generator, dataset_name=dataset_name, token_map=token_map, original_indices=list(test_index))
-        print("Finished converting all splits.")
-        # Save all data to separate JSON files
-        print("Saving processed data to JSON files...")
-        
-        with open(token_map_path, "w") as f:
-            json.dump(token_map, f, indent=2)
-            
-        with open(train_json_path, "w") as f:
-            json.dump(train_structures, f, indent=2)
-            
-        with open(val_json_path, "w") as f:
-            json.dump(val_structures, f, indent=2)
-            
-        with open(test_json_path, "w") as f:
-            json.dump(test_structures, f, indent=2)
-            
-        # Save filtered indices (convert to native Python integers)
-        with open(train_indices_path, "w") as f:
-            json.dump([int(idx) for idx in train_filtered_indices], f, indent=2)
-            
-        with open(val_indices_path, "w") as f:
-            json.dump([int(idx) for idx in val_filtered_indices], f, indent=2)
-            
-        with open(test_indices_path, "w") as f:
-            json.dump([int(idx) for idx in test_filtered_indices], f, indent=2)
-            
-        print(f"Saved {len(train_structures)} train structures to {train_json_path}")
-        print(f"Saved {len(val_structures)} val structures to {val_json_path}")
-        print(f"Saved {len(test_structures)} test structures to {test_json_path}")
-        print(f"Saved token map to {token_map_path}")
-        print("Saved filtered indices:")
-        print(f"  Train indices ({len(train_filtered_indices)}) to {train_indices_path}")
-        print(f"  Val indices ({len(val_filtered_indices)}) to {val_indices_path}")
-        print(f"  Test indices ({len(test_filtered_indices)}) to {test_indices_path}")
-
-    # Verify that we have the correct number of classes
-    all_labels = set()
-    for structures in [train_structures, val_structures, test_structures]:
-        all_labels.update(s["label"] for s in structures)
-    
-    print(f"Found {len(all_labels)} unique labels in processed data")
-    assert len(all_labels) <= num_classes, f"More labels found ({len(all_labels)}) than expected ({num_classes})"
-
-    # Apply test mode limiting if enabled
-    if test_mode:
-        print("\n🧪 TEST MODE ENABLED - Limiting dataset sizes...")
-        original_train_size = len(train_structures)
-        original_val_size = len(val_structures)
-        original_test_size = len(test_structures)
-        
-        train_structures = train_structures[:100]  # Limit to 100 training samples
-        val_structures = val_structures[:20]       # Limit to 20 validation samples  
-        test_structures = test_structures[:20]     # Limit to 20 test samples
-        
-        print(f"  Train: {original_train_size} → {len(train_structures)}")
-        print(f"  Val:   {original_val_size} → {len(val_structures)}")
-        print(f"  Test:  {original_test_size} → {len(test_structures)}")
-
-    # Create separate datasets for each split
-    train_dataset = ProteinClassificationDataset(
-        train_structures, num_classes=num_classes
+if __name__ == "__main__":
+    get_gene_ontology_dataset(
+        split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
     )
-    val_dataset = ProteinClassificationDataset(
-        val_structures, num_classes=num_classes
-    )
-    test_dataset = ProteinClassificationDataset(
-        test_structures, num_classes=num_classes
-    )
-
-    print(f"Train dataset size: {len(train_dataset)}")
-    print(f"Validation dataset size: {len(val_dataset)}")
-    print(f"Test dataset size: {len(test_dataset)}")
-
-    return train_dataset, val_dataset, test_dataset, num_classes
-
-

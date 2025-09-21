@@ -7,11 +7,12 @@ from proteinshake.tasks import LigandAffinityTask
 
 
 
-task = GeneOntologyTask(split='structure', split_similarity_threshold=0.7, root='./data')
+task = ProteinFamilyTask(split='structure', split_similarity_threshold=0.7, root='./data')
 
 print('number of classes', task.num_classes)
 dataset = task.dataset
-# print(dataset)
+
+label = ProteinFamilyTask.token_map()
 
 protein_generator = dataset.proteins(resolution='atom')
 
@@ -29,7 +30,7 @@ print(len(protein_generator))
 i = 0
 for protein in protein_generator:
     print(protein['protein'].keys())
-    print(protein['protein']['molecular_function'])
+    print(protein['protein']['Pfam'])
     # print('EC Number:', protein['protein']['molecular_function'])
     # print(protein['protein']['sequence_split_0.7'])
     i += 1
