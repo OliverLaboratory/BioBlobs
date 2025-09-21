@@ -1,5 +1,5 @@
 cuda_devices=(0 1 2)
-sizes=(5 15 25)
+sizes=(5 10 15 25)
 
 for i in "${!sizes[@]}"; do
     size=${sizes[$i]}
