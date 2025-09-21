@@ -1,41 +1,34 @@
-from proteinshake.datasets import EnzymeCommissionDataset 
-from proteinshake.tasks import ProteinFamilyTask
 from proteinshake.tasks import EnzymeClassTask
 from proteinshake.tasks import StructuralClassTask
 from proteinshake.tasks import GeneOntologyTask
-from proteinshake.tasks import LigandAffinityTask
+from tqdm import tqdm
 
 
 
-task = ProteinFamilyTask(split='structure', split_similarity_threshold=0.7, root='./data')
+datasets = ['enzyme_commission', 'structural_class', 'gene_ontology']
 
-print('number of classes', task.num_classes)
-dataset = task.dataset
+def get_dataset(task_name):
+    if task_name == 'enzyme_commission':
+        return EnzymeClassTask(split='structure', split_similarity_threshold=0.7, root='./data').dataset
+    elif task_name == 'structural_class':
+        return StructuralClassTask(split='structure', split_similarity_threshold=0.7, root='./data').dataset
+    elif task_name == 'gene_ontology':
+        return GeneOntologyTask(split='structure', split_similarity_threshold=0.7, root='./data').dataset
+    elif task_name == 'ligand_affinity':
+        raise ValueError(f"Unknown task name: {task_name}")
 
-label = ProteinFamilyTask.token_map()
+for dataset_name in datasets:
+    print(f"Dataset: {dataset_name}")
+    dataset = get_dataset(dataset_name)
+    protein_generator = dataset.proteins()
 
-protein_generator = dataset.proteins(resolution='atom')
+    i = 0
+    for protein in tqdm(protein_generator, desc="Processing proteins"):
+        if len(protein['protein']['sequence']) > 3000:
+            print('long sequence:', len(protein['protein']['ID']), len(protein['protein']['sequence']))
+            i += 1
 
-print(len(protein_generator))
-
-
-# train_index = task.train_index
-# print('number of training proteins:', len(train_index))
-# print(train_index[:10])
-# valid_index = task.val_index
-# print('number of validation proteins:', len(valid_index))
-# test_index = task.test_index
-# print('number of testing proteins:', len(test_index))
-
-i = 0
-for protein in protein_generator:
-    print(protein['protein'].keys())
-    print(protein['protein']['Pfam'])
-    # print('EC Number:', protein['protein']['molecular_function'])
-    # print(protein['protein']['sequence_split_0.7'])
-    i += 1
-    if i == 2:
-        break
+    print("total number of proteins with sequence length > 3000:", i)
     
 
 

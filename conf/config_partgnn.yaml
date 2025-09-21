@@ -4,17 +4,18 @@ hydra:
   output_subdir: null
 
 data: 
-  dataset_name: enzymecommission
+  dataset_name: enzyme_commission
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /root/ICLR2026/partoken-protein/data
   test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  graph_eps: 10.0
 
 model:
-  node_in_dim: [6, 3]
-  node_h_dim: [100, 16]
-  edge_in_dim: [32, 1]
-  edge_h_dim: [32, 1]
+  node_in_dim: 128
+  node_h_dim: [128, 128]
+  edge_in_dim: 32
+  edge_h_dim: 32
   num_layers: 3
   drop_rate: 0.1
   pooling: sum
@@ -46,10 +47,11 @@ train:
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
-  wandb_project: partgvp
+  wandb_project: partgnn
   # Cosine learning rate schedule with warmup
   use_cosine_schedule: false
   warmup_epochs: 5
+  debug: false
 
 # Interpretability settings
 interpretability:
