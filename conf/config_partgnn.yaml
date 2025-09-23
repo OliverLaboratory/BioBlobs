@@ -32,7 +32,7 @@ model:
   tau_decay: 0.95
   
   # Codebook hyperparameters
-  codebook_size: 512
+  codebook_size: 256
   codebook_dim: null
   codebook_beta: 0.25
   codebook_decay: 0.99
@@ -49,7 +49,7 @@ model:
 
 train:
   max_epochs: 120
-  batch_size: 32
+  batch_size: 128
   learning_rate: 1e-3
   weight_decay: 1e-4
   num_workers: 4

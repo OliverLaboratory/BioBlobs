@@ -3,11 +3,12 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from utils.gnn_dataset import get_gnn_task, get_transformed_graph_dataset, get_data_loaders
 from utils.utils import set_seed
 from train_partgnn_lightning import PartGNNLightning, PartGNNMultiLabelLightning
 import wandb
+import torch
 from datetime import datetime
 import json
 
@@ -45,36 +46,32 @@ def create_model(cfg: DictConfig, task, num_classes: int):
     return model, model_type
 
 
-def setup_callbacks(cfg: DictConfig, custom_output_dir: str):
+def setup_callbacks(cfg: DictConfig, custom_output_dir: str, dataset_name: str):
     """Setup PyTorch Lightning callbacks."""
     callbacks = []
     
     # Learning rate monitor
     callbacks.append(LearningRateMonitor(logging_interval='step'))
     
-    # Model checkpoint callback
+    # Checkpoint callback - use appropriate metric based on task type
+    if dataset_name.lower() == "gene_ontology":
+        filename_template = "best-partgnn-{epoch:02d}-{val_fmax:.3f}"
+        monitor_metric = "val_fmax"
+    else:
+        filename_template = "best-partgnn-{epoch:02d}-{val_acc:.3f}"
+        monitor_metric = "val_acc"
+    
     checkpoint_callback = ModelCheckpoint(
-        dirpath=os.path.join(custom_output_dir, 'checkpoints'),
-        filename='best-{epoch:02d}-{val_loss:.3f}',
-        monitor='val_loss',
-        mode='min',
-        save_top_k=3,
-        save_last=True
+        monitor=monitor_metric,
+        mode="max",
+        save_top_k=1,
+        dirpath=custom_output_dir,
+        filename=filename_template,
+        save_last=True,
     )
     callbacks.append(checkpoint_callback)
     
-    # Early stopping
-    if cfg.train.get('early_stopping', True):
-        early_stop_callback = EarlyStopping(
-            monitor='val_loss',
-            min_delta=0.001,
-            patience=cfg.train.get('patience', 20),
-            verbose=True,
-            mode='min'
-        )
-        callbacks.append(early_stop_callback)
-    
-    return callbacks
+    return callbacks, checkpoint_callback
 
 
 def setup_logger(cfg: DictConfig, custom_output_dir: str, model_type: str):
@@ -90,21 +87,83 @@ def setup_logger(cfg: DictConfig, custom_output_dir: str, model_type: str):
     
     # Weights & Biases logger
     if cfg.get('use_wandb', False) and not cfg.train.debug:
+        timestamp = datetime.now().strftime("%Y-%m-%d")
         wandb_logger = WandbLogger(
             project=cfg.get('wandb_project', 'partgnn-protein'),
-            name=f"{model_type}_{cfg.data.dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            name=f"{cfg.data.dataset_name}_{cfg.data.split}_seq_False_{cfg.model.max_clusters}_{cfg.model.get('cluster_size_max', 'NA')}_{cfg.train.learning_rate}_{timestamp}",
             save_dir=custom_output_dir,
             config=OmegaConf.to_container(cfg, resolve=True),
             tags=[
-                model_type,
+                "partgnn",
                 cfg.data.dataset_name,
-                f"clusters_{cfg.model.max_clusters}",
-                f"layers_{cfg.model.num_layers}"
+                cfg.data.split,
+                model_type
             ]
         )
         loggers.append(wandb_logger)
     
     return loggers
+
+
+def test_checkpoint(
+    checkpoint_path,
+    model_class,
+    model_cfg,
+    train_cfg,
+    num_classes,
+    test_loader,
+    checkpoint_type="best",
+    wandb_logger=None,
+):
+    """Test a specific checkpoint and return results."""
+    print(f"\n🧪 Testing {checkpoint_type} checkpoint: {checkpoint_path}")
+
+    # Load model from checkpoint
+    model = model_class.load_from_checkpoint(
+        checkpoint_path,
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        num_classes=num_classes,
+    )
+
+    # Create test trainer with the same logger if provided
+    test_trainer = pl.Trainer(
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1 if torch.cuda.is_available() else None,
+        logger=wandb_logger if wandb_logger is not None else False,
+    )
+
+    # Run test
+    test_results = test_trainer.test(model, test_loader)
+
+    result = {
+        "checkpoint_type": checkpoint_type,
+        "checkpoint_path": str(checkpoint_path),
+        "test_loss": test_results[0]["test_loss"],
+    }
+    
+    # Add dataset-specific metrics
+    if "test_acc" in test_results[0]:
+        # Single-label classification
+        result["test_accuracy"] = test_results[0]["test_acc"]
+        result["test_ce_loss"] = test_results[0]["test_ce_loss"]
+        print(f"✓ {checkpoint_type.title()} checkpoint test accuracy: {result['test_accuracy']:.4f}")
+    elif "test_fmax" in test_results[0]:
+        # Multi-label classification
+        result["test_fmax"] = test_results[0]["test_fmax"]
+        result["test_precision"] = test_results[0]["test_precision"]
+        result["test_recall"] = test_results[0]["test_recall"]
+        result["test_bce_loss"] = test_results[0]["test_bce_loss"]
+        print(f"✓ {checkpoint_type.title()} checkpoint test FMax: {result['test_fmax']:.4f}")
+    else:
+        print("⚠️ Unknown test metrics format")
+
+    # Add importance metrics if available
+    if "test_importance_max" in test_results[0]:
+        result["test_importance_max"] = test_results[0]["test_importance_max"]
+        result["test_importance_entropy"] = test_results[0]["test_importance_entropy"]
+
+    return result, model
 
 
 @hydra.main(version_base="1.1", config_path="conf", config_name="config_partgnn")
@@ -184,7 +243,7 @@ def main(cfg: DictConfig):
 
     # Setup callbacks and logging
     print("\n⚙️  Setting up Training...")
-    callbacks = setup_callbacks(cfg, custom_output_dir)
+    callbacks, checkpoint_callback = setup_callbacks(cfg, custom_output_dir, cfg.data.dataset_name)
     loggers = setup_logger(cfg, custom_output_dir, model_type)
     
     # Configure trainer
@@ -220,26 +279,171 @@ def main(cfg: DictConfig):
     try:
         trainer.fit(model, train_loader, val_loader)
         
-        # Testing
-        print("\n🧪 Starting Testing...")
-        test_results = trainer.test(model, test_loader, ckpt_path='best')
-        
-        # Save results
-        results_file = os.path.join(custom_output_dir, 'test_results.json')
-        with open(results_file, 'w') as f:
-            json.dump(test_results[0], f, indent=2)
-        
-        print("\n✅ Training completed successfully!")
-        print(f"📊 Results saved to: {results_file}")
-        
-        # Print final metrics
-        if test_results:
-            print("\n🎯 Final Test Results:")
-            for key, value in test_results[0].items():
-                if isinstance(value, float):
-                    print(f"  {key}: {value:.4f}")
+        # Get checkpoint paths
+        best_checkpoint_path = checkpoint_callback.best_model_path
+        last_checkpoint_path = checkpoint_callback.last_model_path
+
+        print("\n📁 Checkpoints:")
+        print(f"  • Best: {best_checkpoint_path}")
+        print(f"  • Last: {last_checkpoint_path}")
+
+        # Test both checkpoints
+        results_summary = {
+            "training_config": OmegaConf.to_container(cfg, resolve=True),
+            "model_info": {
+                "total_parameters": sum(p.numel() for p in model.parameters()),
+                "trainable_parameters": sum(
+                    p.numel() for p in model.parameters() if p.requires_grad
+                ),
+                "mode": model_type,
+            },
+            "checkpoints": {},
+        }
+
+        # Get wandb logger for testing
+        wandb_logger = None
+        for logger in loggers:
+            if isinstance(logger, WandbLogger):
+                wandb_logger = logger
+                break
+
+        # Determine model class for checkpoint loading
+        if cfg.data.dataset_name.lower() == "gene_ontology":
+            model_class = PartGNNMultiLabelLightning
+        else:
+            model_class = PartGNNLightning
+
+        # Test best checkpoint
+        if best_checkpoint_path and os.path.exists(best_checkpoint_path):
+            best_results, best_model = test_checkpoint(
+                best_checkpoint_path,
+                model_class,
+                cfg.model,
+                cfg.train,
+                num_classes,
+                test_loader,
+                "best",
+                wandb_logger,
+            )
+            results_summary["checkpoints"]["best"] = best_results
+            final_model = best_model  # Use best model for interpretability
+        else:
+            print("⚠️  Best checkpoint not found")
+            final_model = model
+
+        # Test last checkpoint
+        if last_checkpoint_path and os.path.exists(last_checkpoint_path):
+            last_results, _ = test_checkpoint(
+                last_checkpoint_path,
+                model_class,
+                cfg.model,
+                cfg.train,
+                num_classes,
+                test_loader,
+                "last",
+                wandb_logger,
+            )
+            results_summary["checkpoints"]["last"] = last_results
+        else:
+            print("⚠️  Last checkpoint not found")
+
+        # Save results summary
+        results_summary_path = os.path.join(custom_output_dir, "results_summary.json")
+        with open(results_summary_path, "w") as f:
+            json.dump(results_summary, f, indent=2)
+        print(f"\n✓ Results summary saved to: {results_summary_path}")
+
+        # Run interpretability analysis
+        if cfg.get('interpretability', {}).get("enabled", True):
+            print("\n🔍 INTERPRETABILITY ANALYSIS")
+            print("=" * 70)
+
+            # Create interpretability output directory
+            interp_output_dir = os.path.join(custom_output_dir, "interpretability")
+            os.makedirs(interp_output_dir, exist_ok=True)
+
+            # Run analysis on test set
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            print("📊 Running interpretability analysis on test set...")
+            try:
+                interp_results = final_model.get_inter_info(
+                    test_loader,
+                    device=device,
+                    max_batches=cfg.get('interpretability', {}).get("max_batches", None),
+                )
+
+                if interp_results is not None:
+                    # Save results
+                    from utils.interpretability import save_interpretability_results, print_interpretability_summary
+                    results_path = os.path.join(interp_output_dir, "test_interpretability.json")
+                    save_interpretability_results(interp_results, results_path)
+
+                    # Print summary
+                    print_interpretability_summary(interp_results)
+
+                    # Add interpretability summary to results
+                    results_summary["interpretability"] = {
+                        "enabled": True,
+                        "results_path": results_path,
+                        "summary": interp_results["aggregated_stats"],
+                    }
                 else:
-                    print(f"  {key}: {value}")
+                    print("⚠️  Interpretability analysis failed")
+                    results_summary["interpretability"] = {
+                        "enabled": False,
+                        "error": "Analysis failed",
+                    }
+            except Exception as e:
+                print(f"⚠️  Interpretability analysis failed: {e}")
+                results_summary["interpretability"] = {
+                    "enabled": False,
+                    "error": str(e),
+                }
+        else:
+            print("⚠️  Interpretability analysis disabled")
+            results_summary["interpretability"] = {"enabled": False}
+
+        # Update results summary with interpretability info
+        with open(results_summary_path, "w") as f:
+            json.dump(results_summary, f, indent=2)
+
+        # Save final model
+        final_model_path = os.path.join(custom_output_dir, "final_partgnn_model.ckpt")
+        trainer.save_checkpoint(final_model_path)
+
+        print("\n🎉 PARTGNN TRAINING COMPLETED!")
+        print("=" * 70)
+        print(f"📁 Final model saved to: {final_model_path}")
+        print(f"📊 Results summary: {results_summary_path}")
+
+        # Print final results summary
+        if "best" in results_summary["checkpoints"]:
+            best_checkpoint = results_summary['checkpoints']['best']
+            if "test_accuracy" in best_checkpoint:
+                print(f"🏆 Best checkpoint test accuracy: {best_checkpoint['test_accuracy']:.4f}")
+            elif "test_fmax" in best_checkpoint:
+                print(f"🏆 Best checkpoint test FMax: {best_checkpoint['test_fmax']:.4f}")
+                print(f"   Best precision: {best_checkpoint['test_precision']:.4f}")
+                print(f"   Best recall: {best_checkpoint['test_recall']:.4f}")
+        
+        if "last" in results_summary["checkpoints"]:
+            last_checkpoint = results_summary['checkpoints']['last']
+            if "test_accuracy" in last_checkpoint:
+                print(f"📈 Last checkpoint test accuracy: {last_checkpoint['test_accuracy']:.4f}")
+            elif "test_fmax" in last_checkpoint:
+                print(f"📈 Last checkpoint test FMax: {last_checkpoint['test_fmax']:.4f}")
+
+        if results_summary["interpretability"]["enabled"]:
+            print("🔍 Interpretability analysis completed")
+            if "summary" in results_summary["interpretability"]:
+                summary_stats = results_summary['interpretability']['summary']
+                if 'accuracy' in summary_stats:
+                    print(f"📊 Overall test accuracy: {summary_stats['accuracy']:.4f}")
+                if 'avg_importance_concentration' in summary_stats:
+                    print(f"🎯 Average attention concentration: {summary_stats['avg_importance_concentration']:.3f}")
+
+        print("=" * 70)
         
     except Exception as e:
         print(f"\n❌ Training failed with error: {e}")
