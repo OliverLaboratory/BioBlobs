@@ -56,7 +56,7 @@ train:
   seed: 42
   
   # Scheduler settings
-  use_cosine_schedule: true
+  use_cosine_schedule: false
   warmup_epochs: 10
   
   # Training settings
