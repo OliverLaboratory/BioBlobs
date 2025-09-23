@@ -4,7 +4,7 @@ hydra:
   output_subdir: null
 
 data: 
-  dataset_name: enzyme_commission  # Options: enzyme_commission, structural_class, gene_ontology
+  dataset_name: structural_class  # Multi-class classification (SCOP)
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /root/ICLR2026/partoken-protein/data
@@ -12,20 +12,20 @@ data:
   graph_eps: 10.0
 
 model:
-  # GNN model hyperparameters
-  embed_dim: 128
+  # GNN model hyperparameters - optimized for multi-class
+  embed_dim: 192   # Medium embedding size for multi-class
   num_layers: 3
   drop_rate: 0.1
   pooling: mean
   use_edge_attr: true
   edge_attr_dim: 1
-  pe: learned  # Options: learned, sine, null
+  pe: learned
   
-  # Partitioner hyperparameters
-  max_clusters: 5
+  # Partitioner hyperparameters - balanced for multi-class
+  max_clusters: 6
   nhid: 50
   k_hop: 2
-  cluster_size_max: 15
+  cluster_size_max: 18
   termination_threshold: 0.95
   tau_init: 1.0
   tau_min: 0.1
@@ -40,7 +40,7 @@ model:
   codebook_distance: l2
   codebook_cosine_normalize: false
   
-  # Loss weights
+  # Loss weights - standard for multi-class
   lambda_vq: 1.0
   lambda_ent: 0.0
   lambda_psc: 1e-2
@@ -61,7 +61,7 @@ train:
   
   # Training settings
   early_stopping: true
-  patience: 20
+  patience: 25     # Moderate patience for multi-class
   gradient_clip_val: 1.0
   log_every_n_steps: 50
   check_val_every_n_epoch: 1
@@ -71,7 +71,7 @@ train:
   
   # Weights & Biases
   models_dir: ./saved_models
-  wandb_project: partgnn
+  wandb_project: partgnn_structural_class
 
 # For W&B logging
 use_wandb: false
@@ -79,4 +79,4 @@ use_wandb: false
 # Interpretability settings
 interpretability:
   enabled: true
-  max_batches: 20  # Limit for interpretability analysis
+  max_batches: 20

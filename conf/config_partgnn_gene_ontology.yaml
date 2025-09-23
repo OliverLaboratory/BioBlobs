@@ -1,0 +1,82 @@
+hydra:
+  run:
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
+  output_subdir: null
+
+data: 
+  dataset_name: gene_ontology  # Multi-label classification
+  split: structure
+  split_similarity_threshold: 0.7
+  data_dir: /root/ICLR2026/partoken-protein/data
+  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  graph_eps: 10.0
+
+model:
+  # GNN model hyperparameters - optimized for multi-label
+  embed_dim: 256  # Larger embedding for multi-label complexity
+  num_layers: 4   # Deeper network for complex patterns
+  drop_rate: 0.15  # Higher dropout for regularization
+  pooling: mean
+  use_edge_attr: true
+  edge_attr_dim: 1
+  pe: learned
+  
+  # Partitioner hyperparameters - more clusters for complex patterns
+  max_clusters: 8
+  nhid: 64
+  k_hop: 2
+  cluster_size_max: 20
+  termination_threshold: 0.90  # More lenient for complex patterns
+  tau_init: 1.0
+  tau_min: 0.05
+  tau_decay: 0.95
+  
+  # Codebook hyperparameters
+  codebook_size: 1024  # Larger codebook for diversity
+  codebook_dim: null
+  codebook_beta: 0.25
+  codebook_decay: 0.99
+  codebook_eps: 1e-5
+  codebook_distance: l2
+  codebook_cosine_normalize: false
+  
+  # Loss weights - balanced for multi-label
+  lambda_vq: 0.5   # Reduce VQ importance for multi-label
+  lambda_ent: 0.0
+  lambda_psc: 1e-3  # Lower PSC for multi-label
+  lambda_card: 0.01  # Higher cardinality penalty
+  psc_temp: 0.5     # Higher temperature for softer assignments
+
+train:
+  max_epochs: 150   # More epochs for complex multi-label task
+  batch_size: 16    # Smaller batch size for stability
+  learning_rate: 5e-4  # Lower learning rate for stability
+  weight_decay: 1e-4
+  num_workers: 4
+  seed: 42
+  
+  # Scheduler settings
+  use_cosine_schedule: true
+  warmup_epochs: 15   # Longer warmup for multi-label
+  
+  # Training settings
+  early_stopping: true
+  patience: 30      # More patience for multi-label convergence
+  gradient_clip_val: 0.5  # Tighter gradient clipping
+  log_every_n_steps: 25
+  check_val_every_n_epoch: 1
+  
+  # Debug mode
+  debug: false
+  
+  # Weights & Biases
+  models_dir: ./saved_models
+  wandb_project: partgnn_gene_ontology
+
+# For W&B logging
+use_wandb: false
+
+# Interpretability settings
+interpretability:
+  enabled: true
+  max_batches: 15  # Fewer batches for complex analysis
