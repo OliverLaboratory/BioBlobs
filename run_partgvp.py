@@ -16,6 +16,8 @@ from utils.interpretability import (
 from utils.save_checkpoints import create_checkpoint_summary
 from train_lightling import PartGVPLightning, PartGVPMultiLabelLightning
 import json
+from hydra.utils import to_absolute_path
+
 
 
 def test_checkpoint(
@@ -100,7 +102,7 @@ def main(cfg: DictConfig):
         dataset_name=cfg.data.dataset_name,
         split=cfg.data.split,
         split_similarity_threshold=cfg.data.split_similarity_threshold,
-        data_dir=cfg.data.data_dir,
+        data_dir=to_absolute_path(cfg.data.data_dir),
         test_mode=cfg.data.get("test_mode", False),
     )
 
