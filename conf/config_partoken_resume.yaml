@@ -20,7 +20,7 @@ data:
   dataset_name: enzymecommission
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: /home/wangx86/partoken/partoken-protein/data
+  data_dir: /root/ICLR2026/partoken-protein/data
   test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
 
 # Model configuration (will be loaded from checkpoint if load_model_config_from_checkpoint=true)

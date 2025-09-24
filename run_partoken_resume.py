@@ -143,14 +143,18 @@ def main(cfg: DictConfig):
     model.train()
     print("  • Model set to training mode")
     
-    # Force all modules to training mode (except those that should remain in eval mode)
+    # Force ALL modules to training mode to avoid PyTorch Lightning warning
+    # This is safe for resume training as we want all parameters to be trainable
+    modules_set_to_train = 0
     for name, module in model.named_modules():
-        if hasattr(module, 'training'):
-            # Keep specific modules in eval mode if needed (e.g., frozen batch norm)
-            if not any(skip in name for skip in ['frozen', 'eval_only']):
-                module.train()
+        if hasattr(module, 'training') and not module.training:
+            module.train()
+            modules_set_to_train += 1
     
-    # Check for any modules still in eval mode
+    if modules_set_to_train > 0:
+        print(f"  • Forced {modules_set_to_train} modules from eval to training mode")
+    
+    # Final check for any modules still in eval mode
     eval_modules = []
     for name, module in model.named_modules():
         if hasattr(module, 'training') and not module.training:
@@ -158,13 +162,12 @@ def main(cfg: DictConfig):
     
     if eval_modules:
         print(f"  ⚠️  Warning: {len(eval_modules)} modules still in eval mode:")
-        for mod in eval_modules[:5]:  # Show first 5
+        for mod in eval_modules[:3]:  # Show first 3
             print(f"     - {mod}")
-        if len(eval_modules) > 5:
-            print(f"     ... and {len(eval_modules) - 5} more")
-        print("     These may be intentionally frozen or may cause the PyTorch Lightning warning.")
+        if len(eval_modules) > 3:
+            print(f"     ... and {len(eval_modules) - 3} more")
     else:
-        print("  • All modules are in training mode")
+        print("  • All modules confirmed in training mode")
     
     # Run initial interpretability analysis before training
     print(f"\n🔍 INITIAL INTERPRETABILITY ANALYSIS (BEFORE TRAINING)")
