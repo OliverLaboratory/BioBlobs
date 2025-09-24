@@ -1,5 +1,11 @@
-cuda_devices=(0 1 2)
-sizes=(5 10 15 25)
+cuda_devices=(1 2 3)
+sizes=(5 10 25)
+
+# Ensure arrays have the same length
+if [ ${#sizes[@]} -ne ${#cuda_devices[@]} ]; then
+    echo "Error: sizes and cuda_devices arrays must have the same length."
+    exit 1
+fi
 
 for i in "${!sizes[@]}"; do
     size=${sizes[$i]}
@@ -12,7 +18,7 @@ for i in "${!sizes[@]}"; do
         data.test_mode=false \
         train.use_wandb=true \
         train.wandb_project=PartGVP-max-cluster-sizes \
-        data.dataset_name=scope \
+        data.dataset_name=enzymecommission \
         model.seq_in=false \
         model.cluster_size_max=$size \
         data.split=random &
