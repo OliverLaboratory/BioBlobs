@@ -1,6 +1,6 @@
-# ParToken Multi-Stage Training
+# BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning
 
-ParToken is a multi-stage protein classification model that combines graph neural networks with vector quantization for interpretable protein function prediction. The model uses a two-stage training approach: baseline training followed by joint fine-tuning with codebook learning.
+BioBlobs is a multi-stage protein classification model that combines graph neural networks with vector quantization for interpretable protein function prediction. The model uses a two-stage training approach: baseline training followed by joint fine-tuning with codebook learning.
 
 ## Overview
 
