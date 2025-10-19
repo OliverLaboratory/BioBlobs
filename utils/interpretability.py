@@ -68,6 +68,48 @@ def extract_cluster_info_batch(
         }
 
 
+def _is_multilabel_prediction(prob):
+    """Check if prediction is multi-label based on probability tensor shape and values."""
+    # For multi-label, probabilities are typically from sigmoid (BCEWithLogitsLoss)
+    # For single-label, probabilities are from softmax (CrossEntropyLoss)
+    # We assume multi-label if probabilities don't sum to ~1.0
+    return abs(prob.sum() - 1.0) > 0.1
+
+
+def _compute_multilabel_metrics(pred_prob, true_labels, threshold=0.5):
+    """Compute multi-label metrics using threshold."""
+    pred_binary = pred_prob >= threshold
+    
+    # Compute per-sample metrics
+    if isinstance(true_labels, np.ndarray) and true_labels.dtype == bool:
+        true_binary = true_labels
+    else:
+        true_binary = true_labels >= threshold
+    
+    # Check if predictions exactly match true labels
+    exact_match = np.array_equal(pred_binary, true_binary)
+    
+    # Compute F1 score for this sample
+    intersection = np.logical_and(pred_binary, true_binary).sum()
+    union = np.logical_or(pred_binary, true_binary).sum()
+    
+    if union == 0:
+        f1_score = 1.0 if intersection == 0 else 0.0
+    else:
+        precision = intersection / pred_binary.sum() if pred_binary.sum() > 0 else 0.0
+        recall = intersection / true_binary.sum() if true_binary.sum() > 0 else 0.0
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return {
+        'exact_match': exact_match,
+        'f1_score': f1_score,
+        'precision': precision if 'precision' in locals() else 0.0,
+        'recall': recall if 'recall' in locals() else 0.0,
+        'num_predicted_labels': pred_binary.sum(),
+        'num_true_labels': true_binary.sum()
+    }
+
+
 def analyze_single_protein(
     importance_data: Dict[str, Any],
     protein_idx: int
@@ -98,37 +140,60 @@ def analyze_single_protein(
     importance_ranking = np.argsort(valid_importance)[::-1]  # Descending order
     all_clusters = valid_cluster_indices[importance_ranking]
     
-    # Calculate confidence and correctness
-    confidence = np.max(prob)
-    is_correct = pred == true_label
+    # Determine if multi-label or single-label classification
+    is_multilabel = _is_multilabel_prediction(prob)
     
-    # Importance distribution analysis (concentration measures focus: 0=dispersed, 1=focused)
+    if is_multilabel:
+        # Multi-label classification metrics
+        ml_metrics = _compute_multilabel_metrics(prob, true_label)
+        confidence = prob.max()  # Max probability as confidence
+        is_correct = ml_metrics['exact_match']
+        
+        result = {
+            'protein_idx': protein_idx,
+            'prediction': (prob >= 0.5).astype(int).tolist(),  # Binary predictions
+            'true_label': true_label.tolist() if hasattr(true_label, 'tolist') else true_label,
+            'probabilities': prob.tolist(),
+            'confidence': float(confidence),
+            'is_correct': bool(is_correct),
+            'classification_type': 'multi-label',
+            'f1_score': ml_metrics['f1_score'],
+            'precision': ml_metrics['precision'],
+            'recall': ml_metrics['recall'],
+            'num_predicted_labels': int(ml_metrics['num_predicted_labels']),
+            'num_true_labels': int(ml_metrics['num_true_labels']),
+        }
+    else:
+        # Single-label classification metrics
+        confidence = np.max(prob)
+        is_correct = pred == true_label
+        
+        result = {
+            'protein_idx': protein_idx,
+            'prediction': int(pred),
+            'true_label': int(true_label),
+            'probabilities': prob.tolist(),
+            'confidence': float(confidence),
+            'is_correct': bool(is_correct),
+            'classification_type': 'single-label',
+        }
+    
+    # Add clustering analysis (common to both types)
     importance_concentration = 1.0 - (
         (-np.sum(valid_importance * np.log(valid_importance + 1e-8))) / 
         np.log(len(valid_importance))
     )
     
-    return {
-        'protein_idx': protein_idx,
-        'prediction': int(pred),
-        'true_label': int(true_label),
-        'probabilities': prob.tolist(),
-        'confidence': float(confidence),
-        'is_correct': bool(is_correct),
+    result.update({
         'num_valid_clusters': int(valid_clusters.sum()),
         'cluster_sizes': cluster_sizes[valid_clusters].tolist(),
         'importance_scores': valid_importance.tolist(),
         'importance_concentration': float(importance_concentration),
-        'all_clusters': {
-            'indices': all_clusters.tolist(),
-            'importance_scores': importance[all_clusters].tolist(),
-            'sizes': cluster_sizes[all_clusters].tolist()
-        },
-        'cluster_composition': {
-            int(cluster_idx): np.where(assignment[:, cluster_idx] > 0.5)[0].tolist()
-            for cluster_idx in all_clusters
-        }
-    }
+        'top_cluster_indices': all_clusters[:5].tolist(),  # Top 5 clusters
+        'top_cluster_importance': valid_importance[importance_ranking[:5]].tolist()
+    })
+    
+    return result
 
 
 def dataset_inter_results(
@@ -175,14 +240,37 @@ def dataset_inter_results(
             protein_analysis['global_protein_idx'] = batch_idx * batch_size + protein_idx
             all_results.append(protein_analysis)
     
-    # Aggregate statistics
+    # Aggregate statistics - detect classification type
+    classification_types = [r['classification_type'] for r in all_results]
+    is_multilabel = 'multi-label' in classification_types
+    
     correct_predictions = [r for r in all_results if r['is_correct']]
     incorrect_predictions = [r for r in all_results if not r['is_correct']]
     
     aggregated_stats = {
         'total_proteins': len(all_results),
-        'accuracy': len(correct_predictions) / len(all_results),
+        'classification_type': 'multi-label' if is_multilabel else 'single-label',
         'avg_confidence': np.mean([r['confidence'] for r in all_results]),
+    }
+    
+    # Add performance metrics based on classification type
+    if is_multilabel:
+        # Multi-label metrics
+        aggregated_stats.update({
+            'exact_match_accuracy': len(correct_predictions) / len(all_results),
+            'avg_f1_score': np.mean([r['f1_score'] for r in all_results]),
+            'avg_precision': np.mean([r['precision'] for r in all_results]),
+            'avg_recall': np.mean([r['recall'] for r in all_results]),
+            'avg_predicted_labels': np.mean([r['num_predicted_labels'] for r in all_results]),
+            'avg_true_labels': np.mean([r['num_true_labels'] for r in all_results])
+        })
+    else:
+        # Single-label metrics
+        aggregated_stats.update({
+            'accuracy': len(correct_predictions) / len(all_results)
+        })
+    
+    aggregated_stats.update({
         'avg_clusters_per_protein': np.mean([r['num_valid_clusters'] for r in all_results]),
         'avg_importance_concentration': np.mean([r['importance_concentration'] for r in all_results]),
         'avg_coverage': np.mean([bs['avg_coverage'] for bs in batch_stats]),
@@ -200,7 +288,7 @@ def dataset_inter_results(
                 'avg_concentration': np.mean([r['importance_concentration'] for r in incorrect_predictions]) if incorrect_predictions else 0
             }
         }
-    }
+    })
     
     results = {
         'protein_analyses': all_results,
@@ -252,9 +340,20 @@ def print_interpretability_summary(results: Dict[str, Any]) -> None:
     print("📊 INTERPRETABILITY ANALYSIS SUMMARY")
     print("="*60)
     
-    print(f"📈 Overall Performance:")
+    print("📈 Overall Performance:")
     print(f"  • Total proteins analyzed: {stats['total_proteins']}")
-    print(f"  • Accuracy: {stats['accuracy']:.3f}")
+    print(f"  • Classification type: {stats['classification_type']}")
+    
+    if stats['classification_type'] == 'multi-label':
+        print(f"  • Exact match accuracy: {stats['exact_match_accuracy']:.3f}")
+        print(f"  • Average F1 score: {stats['avg_f1_score']:.3f}")
+        print(f"  • Average precision: {stats['avg_precision']:.3f}")
+        print(f"  • Average recall: {stats['avg_recall']:.3f}")
+        print(f"  • Avg predicted labels: {stats['avg_predicted_labels']:.1f}")
+        print(f"  • Avg true labels: {stats['avg_true_labels']:.1f}")
+    else:
+        print(f"  • Accuracy: {stats['accuracy']:.3f}")
+    
     print(f"  • Average confidence: {stats['avg_confidence']:.3f}")
     
     print(f"\n🧬 Clustering Analysis:")

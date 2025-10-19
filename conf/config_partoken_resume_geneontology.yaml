@@ -1,0 +1,92 @@
+# Configuration for resuming ParToken training from PartGVP checkpoint - Gene Ontology Multi-label
+defaults:
+  - _self_
+
+hydra:
+  run:
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
+  output_subdir: null
+
+# Resume training configuration
+resume:
+  partgvp_checkpoint_path: null  # Must be provided via command line
+  initialize_codebook: true
+  kmeans_max_batches: 15
+  validation_split: 0.1
+  load_model_config_from_checkpoint: true 
+
+# Data configuration
+data:
+  dataset_name: geneontology
+  split: structure
+  split_similarity_threshold: 0.7
+  data_dir: /home/wangx86/partoken/partoken-protein/data
+  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+
+# Model configuration (will be loaded from checkpoint if load_model_config_from_checkpoint=true)
+model:
+  # Basic architecture (fallback values if not found in checkpoint)
+  node_in_dim: [6, 3]
+  node_h_dim: [100, 16]
+  edge_in_dim: [32, 1]
+  edge_h_dim: [32, 1]
+  seq_in: false
+  num_layers: 2
+  drop_rate: 0.1
+  pooling: sum
+  max_clusters: 3
+  nhid: 50
+  k_hop: 1
+  cluster_size_max: 15
+  termination_threshold: 0.95
+  tau_init: 1.0
+  tau_min: 0.1
+  tau_decay: 0.95
+  
+  # Codebook parameters (these will NOT be loaded from checkpoint since PartGVP doesn't use codebook)
+  codebook_size: 512
+  codebook_dim: null  # Will use node_h_dim[0]
+  codebook_beta: 0.25
+  codebook_decay: 0.99
+  codebook_eps: 1e-5
+  codebook_distance: l2
+  codebook_cosine_normalize: false
+  lambda_vq: 1.0
+  lambda_ent: 0.0
+  lambda_psc: 0.01
+  lambda_card: 0.005
+  psc_temp: 0.3
+
+# Multi-stage training configuration
+multistage:
+  stage0:
+    name: joint_training
+    epochs: 60  # Gene Ontology typically needs more epochs due to complexity
+    lr: 1e-3  # Match original PartGVP Gene Ontology learning rate
+    freeze_backbone: false
+    loss_weights:
+      lambda_vq: 1.0
+      lambda_ent: 0.1
+      lambda_psc: 0.01
+
+# Training configuration
+train:
+  batch_size: 256
+  num_workers: 8
+  seed: 42
+  models_dir: ./saved_models
+  use_wandb: false
+  wandb_project: codebook-resume-geneontology
+  use_cosine_schedule: false
+  warmup_epochs: 5
+
+# Evaluation settings
+evaluation:
+  run_interpretability: true
+  compare_with_baseline: true
+  max_batches_interp: 20
+
+# Interpretability settings
+interpretability:
+  enabled: true
+  max_batches: 20
