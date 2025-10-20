@@ -29,7 +29,7 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 
 Train on Enzyme Commission dataset:
 ```bash
-python run_partgvp.py \
+python run_bioblobs.py \
     data.dataset_name=enzymecommission \
     data.split=random \
     train.epochs=120 \
@@ -38,11 +38,11 @@ python run_partgvp.py \
 
 ### 2. Resume Training with Codebook 
 
-Resume from PartGVP checkpoint with VQ codebook:
+Resume from bioblobs checkpoint with VQ codebook:
 ```bash
 python run_partoken_resume.py \
     data.dataset_name=enzymecommission \
-    resume.partgvp_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-partgvp-*.ckpt \
+    resume.bioblobs_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-bioblobs-*.ckpt \
     multistage.stage0.epochs=50
 ```
 
@@ -52,9 +52,9 @@ Training outputs are organized as follows:
 ```
 outputs/YYYY-MM-DD/HH-MM-SS/
 ├── results_summary.json          # Training metrics and test results
-├── best-partgvp-*.ckpt          # Best checkpoint (PartGVP)  
+├── best-bioblobs-*.ckpt          # Best checkpoint (bioblobs)  
 ├── last.ckpt                     # Last checkpoint
-├── final_partgvp_model.ckpt      # Final saved model
+├── final_bioblobs_model.ckpt      # Final saved model
 ├── interpretability/             # Analysis results
 │   ├── test_interpretability.json
 │   └── initial.json              # (resume training only)
