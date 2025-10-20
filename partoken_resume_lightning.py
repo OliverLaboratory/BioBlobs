@@ -1,16 +1,16 @@
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from omegaconf import DictConfig
 from partoken_model import ParTokenModel
 from utils.interpretability import dataset_inter_results
 from utils.fmax_metric import FMaxMetric
 
 
-class ParTokenResumeTrainingLightning(pl.LightningModule):
+class BioBlobsTrainingModule(pl.LightningModule):
     """
-    Dedicated Lightning module for ParToken resume training from PartGVP checkpoint.
+    Training module for BioBlobs training with codebook integration.
     
     This module handles:
     - Direct joint training (no multi-stage needed for EMA-based VQ)
@@ -65,7 +65,7 @@ class ParTokenResumeTrainingLightning(pl.LightningModule):
     def setup_joint_training(self):
         """Setup model for joint training of all components."""
         print(f"\n{'='*60}")
-        print(f"SETTING UP JOINT TRAINING (BACKBONE + CODEBOOK)")
+        print("SETTING UP JOINT TRAINING (BACKBONE + CODEBOOK)")
         print(f"{'='*60}")
         
         # Extract loss weights from stage0 config (now joint training)
@@ -87,7 +87,7 @@ class ParTokenResumeTrainingLightning(pl.LightningModule):
         self.model.train()
         
         print(f"✓ Loss weights: λ_vq={lambda_vq:.1e}, λ_ent={lambda_ent:.1e}, λ_psc={lambda_psc:.1e}")
-        print(f"✓ Training mode: Joint training (backbone + EMA codebook)")
+        print("✓ Training mode: Joint training (backbone + EMA codebook)")
         print(f"✓ Trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
         print(f"✓ Model training mode: {self.model.training}")
         print(f"{'='*60}\n")
@@ -321,7 +321,7 @@ class ParTokenResumeTrainingLightning(pl.LightningModule):
             return optimizer
 
 
-class ParTokenResumeTrainingMultiLabelLightning(ParTokenResumeTrainingLightning):
+class ParTokenResumeTrainingMultiLabelLightning(BioBlobsTrainingModule):
     """
     Multi-label version of ParToken resume training for Gene Ontology dataset.
     
