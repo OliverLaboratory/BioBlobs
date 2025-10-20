@@ -2,11 +2,6 @@
 
 Differentiable  Graph Partitioning for Protein Representation Learning
 
-## Methods
-
-- **PartGVP**: BioBlobs without codebook (baseline geometric model)  
-- **BioBlobs**: Resume training with VQ codebook for hierarchical representations
-
 ## Installation
 
 Create environment:
@@ -30,7 +25,7 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 
 ## Usage
 
-### 1. Train PartGVP (baseline)
+### 1. Train BioBlobs without codebook 
 
 Train on Enzyme Commission dataset:
 ```bash
@@ -41,7 +36,7 @@ python run_partgvp.py \
     train.use_wandb=true
 ```
 
-### 2. Resume Training with Codebook (BioBlobs)
+### 2. Resume Training with Codebook 
 
 Resume from PartGVP checkpoint with VQ codebook:
 ```bash
@@ -71,8 +66,8 @@ outputs/YYYY-MM-DD/HH-MM-SS/
 
 ## Key Files
 
-- `run_partgvp.py`: Train BIOBLOS w/o codebook baseline
-- `run_partoken_resume.py`: Resume training with VQ codebook to get BIOBLOS results
+- `run_bioblobs.py`: Train BIOBLOS w/o codebook baseline
+- `run_bioblobs_codebook_resume.py`: Resume training with VQ codebook to get BIOBLOS results
 - `train_lightling.py`: Lightning modules for both methods
 - `partoken_model.py`: Core model architecture
 - `conf/`: Configuration files for different datasets/settings
