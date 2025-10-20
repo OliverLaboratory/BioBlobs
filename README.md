@@ -69,5 +69,5 @@ outputs/YYYY-MM-DD/HH-MM-SS/
 - `run_bioblobs.py`: Train BIOBLOS w/o codebook baseline
 - `run_bioblobs_codebook_resume.py`: Resume training with VQ codebook to get BIOBLOS results
 - `train_lightling.py`: Lightning modules for both methods
-- `partoken_model.py`: Core model architecture
+- `bioblobs_model.py`: Core model architecture
 - `conf/`: Configuration files for different datasets/settings
