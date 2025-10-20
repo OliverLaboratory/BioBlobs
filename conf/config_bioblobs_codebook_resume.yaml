@@ -9,7 +9,7 @@ hydra:
 
 # Resume training configuration
 resume:
-  partgvp_checkpoint_path: null  # Must be provided via command line
+  model_checkpoint_path: null  # Must be provided via command line
   initialize_codebook: true
   kmeans_max_batches: 15
   validation_split: 0.1

@@ -71,7 +71,7 @@ def test_checkpoint(
         result["test_bce_loss"] = test_results[0]["test_bce_loss"]
         print(f"✓ {checkpoint_type.title()} checkpoint test FMax: {result['test_fmax']:.4f}")
     else:
-        print("⚠️ Unknown test metrics format")
+        print("Unknown test metrics format")
 
     # Add importance metrics if available
     if "test_importance_max" in test_results[0]:
@@ -81,9 +81,9 @@ def test_checkpoint(
     return result, model
 
 
-@hydra.main(version_base="1.1", config_path="conf", config_name="config_partgvp")
+@hydra.main(version_base="1.1", config_path="conf", config_name="config_bioblobs")
 def main(cfg: DictConfig):
-    print("🧬 PartGVP Training (GVP + Partitioner + Global-Cluster Attention)")
+    print("BioBlobs Training (GVP + Partitioner + Global-Cluster Attention)")
     print("=" * 70)
     print(OmegaConf.to_yaml(cfg))
 
@@ -118,19 +118,18 @@ def main(cfg: DictConfig):
         test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False
     )
 
-    # Create PartGVP model - choose appropriate class based on dataset
     if cfg.data.dataset_name == "geneontology":
-        print("🧬 Using PartGVPMultiLabelLightning for multi-label Gene Ontology classification")
+        print("Using BioBlobsMultiLabelLightning for multi-label Gene Ontology classification")
         model_class = BioBlobsMultiLabelLightning
         model = model_class(cfg.model, cfg.train, num_classes)
-        model_type = "PartGVP Multi-Label"
+        model_type = "BioBlobs Multi-Label"
     else:
-        print("🧬 Using PartGVPLightning for single-label classification")
+        print("Using BioBlobsLightning for single-label classification")
         model_class = BioBlobsLightning
         model = model_class(cfg.model, cfg.train, num_classes)
-        model_type = "PartGVP"
+        model_type = "BioBlobs"
 
-    print("\n🏗️  Model Architecture:")
+    print("\nModel Architecture:")
     print(f"  • Total parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(
         f"  • Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
@@ -144,15 +143,15 @@ def main(cfg: DictConfig):
         wandb_logger = WandbLogger(
             project=cfg.train.wandb_project,
             name=f"{cfg.data.dataset_name}_{cfg.data.split}_seq_{cfg.model.seq_in}_{cfg.model.max_clusters}_{cfg.model.cluster_size_max}_{cfg.train.lr}_{timestamp}",
-            tags=["partgvp", cfg.data.dataset_name, cfg.data.split],
+            tags=["bioblobs-baseline", cfg.data.dataset_name, cfg.data.split],
         )
 
     # Checkpoint callback - use appropriate metric based on task type
     if cfg.data.dataset_name == "geneontology":
-        filename_template = "best-partgvp-{epoch:02d}-{val_fmax:.3f}"
+        filename_template = "best-bioblobs-{epoch:02d}-{val_fmax:.3f}"
         monitor_metric = "val_fmax"
     else:
-        filename_template = "best-partgvp-{epoch:02d}-{val_acc:.3f}"
+        filename_template = "best-bioblobs-{epoch:02d}-{val_acc:.3f}"
         monitor_metric = "val_acc"
     
     checkpoint_callback = ModelCheckpoint(
@@ -178,14 +177,14 @@ def main(cfg: DictConfig):
     )
 
     # Training
-    print(f"\n📚 Training PartGVP for {cfg.train.epochs} epochs...")
+    print(f"\n📚 Training BioBlobs for {cfg.train.epochs} epochs...")
     trainer.fit(model, train_loader, val_loader)
 
     # Get checkpoint paths
     best_checkpoint_path = checkpoint_callback.best_model_path
     last_checkpoint_path = checkpoint_callback.last_model_path
 
-    print("\n📁 Checkpoints:")
+    print("\nCheckpoints:")
     print(f"  • Best: {best_checkpoint_path}")
     print(f"  • Last: {last_checkpoint_path}")
 
@@ -197,7 +196,7 @@ def main(cfg: DictConfig):
             "trainable_parameters": sum(
                 p.numel() for p in model.parameters() if p.requires_grad
             ),
-            "mode": "PartGVP",
+            "mode": "BioBlobs",
         },
         "checkpoints": {},
     }
@@ -217,7 +216,7 @@ def main(cfg: DictConfig):
         results_summary["checkpoints"]["best"] = best_results
         final_model = best_model  # Use best model for interpretability
     else:
-        print("⚠️  Best checkpoint not found")
+        print("Best checkpoint not found")
         final_model = model
 
     # Test last checkpoint
@@ -234,7 +233,7 @@ def main(cfg: DictConfig):
         )
         results_summary["checkpoints"]["last"] = last_results
     else:
-        print("⚠️  Last checkpoint not found")
+        print("Last checkpoint not found")
 
     # Save results summary
     results_summary_path = os.path.join(custom_output_dir, "results_summary.json")
@@ -244,7 +243,7 @@ def main(cfg: DictConfig):
 
     # Run interpretability analysis
     if cfg.interpretability.get("enabled", True):
-        print("\n🔍 INTERPRETABILITY ANALYSIS")
+        print("\nINTERPRETABILITY ANALYSIS")
         print("=" * 70)
 
         # Create interpretability output directory
@@ -254,7 +253,7 @@ def main(cfg: DictConfig):
         # Run analysis on test set
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        print("📊 Running interpretability analysis on test set...")
+        print("Running interpretability analysis on test set...")
         interp_results = final_model.get_inter_info(
             test_loader,
             device=device,
@@ -276,13 +275,13 @@ def main(cfg: DictConfig):
                 "summary": interp_results["aggregated_stats"],
             }
         else:
-            print("⚠️  Interpretability analysis failed")
+            print("Interpretability analysis failed")
             results_summary["interpretability"] = {
                 "enabled": False,
                 "error": "Analysis failed",
             }
     else:
-        print("⚠️  Interpretability analysis disabled")
+        print("Interpretability analysis disabled")
         results_summary["interpretability"] = {"enabled": False}
 
     # Update results summary with interpretability info
@@ -290,7 +289,7 @@ def main(cfg: DictConfig):
         json.dump(results_summary, f, indent=2)
 
     # Save final model
-    final_model_path = os.path.join(custom_output_dir, "final_partgvp_model.ckpt")
+    final_model_path = os.path.join(custom_output_dir, "final_bioblobs_model.ckpt")
     trainer.save_checkpoint(final_model_path)
 
     # Create checkpoint summary
@@ -300,37 +299,37 @@ def main(cfg: DictConfig):
     if wandb_logger is not None:
         wandb.finish()
 
-    print("\n🎉 PARTGVP TRAINING COMPLETED!")
+    print("\nBIOBLOBS TRAINING COMPLETED!")
     print("=" * 70)
-    print(f"📁 Final model saved to: {final_model_path}")
-    print(f"📋 Checkpoint summary: {summary_path}")
-    print(f"📊 Results summary: {results_summary_path}")
+    print(f"Final model saved to: {final_model_path}")
+    print(f"Checkpoint summary: {summary_path}")
+    print(f"Results summary: {results_summary_path}")
 
     # Print final results summary
     if "best" in results_summary["checkpoints"]:
         best_checkpoint = results_summary['checkpoints']['best']
         if "test_accuracy" in best_checkpoint:
-            print(f"🏆 Best checkpoint test accuracy: {best_checkpoint['test_accuracy']:.4f}")
+            print(f"Best checkpoint test accuracy: {best_checkpoint['test_accuracy']:.4f}")
         elif "test_fmax" in best_checkpoint:
-            print(f"🏆 Best checkpoint test FMax: {best_checkpoint['test_fmax']:.4f}")
-            print(f"   Best precision: {best_checkpoint['test_precision']:.4f}")
-            print(f"   Best recall: {best_checkpoint['test_recall']:.4f}")
-    
+            print(f"Best checkpoint test FMax: {best_checkpoint['test_fmax']:.4f}")
+            print(f"Best precision: {best_checkpoint['test_precision']:.4f}")
+            print(f"Best recall: {best_checkpoint['test_recall']:.4f}")
+
     if "last" in results_summary["checkpoints"]:
         last_checkpoint = results_summary['checkpoints']['last']
         if "test_accuracy" in last_checkpoint:
-            print(f"📈 Last checkpoint test accuracy: {last_checkpoint['test_accuracy']:.4f}")
+            print(f"Last checkpoint test accuracy: {last_checkpoint['test_accuracy']:.4f}")
         elif "test_fmax" in last_checkpoint:
-            print(f"📈 Last checkpoint test FMax: {last_checkpoint['test_fmax']:.4f}")
+            print(f"Last checkpoint test FMax: {last_checkpoint['test_fmax']:.4f}")
 
     if results_summary["interpretability"]["enabled"]:
-        print("🔍 Interpretability analysis completed")
+        print("Interpretability analysis completed")
         if "summary" in results_summary["interpretability"]:
             print(
-                f"📊 Overall test accuracy: {results_summary['interpretability']['summary']['accuracy']:.4f}"
+                f"Overall test accuracy: {results_summary['interpretability']['summary']['accuracy']:.4f}"
             )
             print(
-                f"🎯 Average attention concentration: {results_summary['interpretability']['summary']['avg_importance_concentration']:.3f}"
+                f"Average attention concentration: {results_summary['interpretability']['summary']['avg_importance_concentration']:.3f}"
             )
 
     print("=" * 70)
