@@ -13,10 +13,11 @@ from utils.blob_partition import Partitioner
 
 class BioBlobsModel(nn.Module):
     """
-    Optimized GVP-GNN with efficient partitioning for protein classification.
-
-    This model combines GVP layers for geometric deep learning on proteins
-    with a partitioner for hierarchical clustering.
+    BioBlobs model combines GVP layers for geometric deep learning on proteins
+    with a partitioner for hierarchical clustering. A vector-quantized codebook
+    is used to discretize cluster embeddings for regularization. The model then
+    employs global-to-cluster attention and feature-wise gating to fuse cluster
+    information for final classification.
 
     Args:
         node_in_dim: Input node dimensions (scalar, vector)

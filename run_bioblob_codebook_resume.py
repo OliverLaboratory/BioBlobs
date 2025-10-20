@@ -18,7 +18,7 @@ from train_lightling import (
     create_partoken_resume_model_from_checkpoint,
     initialize_codebook_from_dataloader,
 )
-from partoken_resume_lightning import ParTokenResumeTrainingLightning
+from bioblob_resume_lightning import BioBlobsTrainingCodebookModule
 import json
 
 
@@ -352,11 +352,11 @@ def main(cfg: DictConfig):
 
     # Test best checkpoint - use the correct model class based on dataset
     if cfg.data.dataset_name == "geneontology":
-        from partoken_resume_lightning import ParTokenResumeTrainingMultiLabelLightning
+        from bioblob_resume_lightning import BioBlobsTrainingCodebookMultiLabelModule
 
-        test_model_class = ParTokenResumeTrainingMultiLabelLightning
+        test_model_class = BioBlobsTrainingCodebookMultiLabelModule
     else:
-        test_model_class = ParTokenResumeTrainingLightning
+        test_model_class = BioBlobsTrainingCodebookModule
 
     if best_checkpoint_path and os.path.exists(best_checkpoint_path):
         best_results, best_model = test_checkpoint(

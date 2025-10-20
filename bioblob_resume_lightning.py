@@ -3,12 +3,12 @@ import torch
 import torch.nn as nn
 from typing import Dict, Optional
 from omegaconf import DictConfig
-from partoken_model import ParTokenModel
+from bioblobs_model import ParTokenModel
 from utils.interpretability import dataset_inter_results
 from utils.fmax_metric import FMaxMetric
 
 
-class BioBlobsTrainingModule(pl.LightningModule):
+class BioBlobsTrainingCodebookModule(pl.LightningModule):
     """
     Training module for BioBlobs training with codebook integration.
     
@@ -321,11 +321,11 @@ class BioBlobsTrainingModule(pl.LightningModule):
             return optimizer
 
 
-class ParTokenResumeTrainingMultiLabelLightning(BioBlobsTrainingModule):
+class BioBlobsTrainingCodebookMultiLabelModule(BioBlobsTrainingCodebookModule):
     """
-    Multi-label version of ParToken resume training for Gene Ontology dataset.
-    
-    This class extends ParTokenResumeTrainingLightning to handle multi-label classification with:
+    Multi-label version of BioBlobs resume training for Gene Ontology dataset.
+
+    This class extends BioBlobsResumeTrainingLightning to handle multi-label classification with:
     - BCEWithLogitsLoss instead of CrossEntropyLoss
     - FMax metric instead of accuracy
     - Updated logging for multi-label metrics

@@ -1,5 +1,5 @@
 import pytorch_lightning as pl
-from partoken_model import ParTokenModel
+from bioblobs_model import BioBlobsModel
 from utils.lr_schedule import get_cosine_schedule_with_warmup
 from utils.fmax_metric import FMaxMetric
 import torch
@@ -11,8 +11,8 @@ from utils.interpretability import (
 )
 
 
-class PartGVPLightning(pl.LightningModule):
-    """PartGVP Lightning module that trains only GVP + partitioner + global-cluster attention fusion.
+class BioBlobsLightning(pl.LightningModule):
+    """BioBlobs Lightning module that trains only GVP + partitioner + global-cluster attention fusion.
 
     This is a simplified version that bypasses the VQ codebook entirely and focuses on
     the core GVP architecture with hierarchical partitioning and attention mechanisms.
@@ -22,8 +22,7 @@ class PartGVPLightning(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        # Create model - we'll always bypass the codebook
-        self.model = ParTokenModel(
+        self.model = BioBlobsModel(
             node_in_dim=model_cfg.node_in_dim,
             node_h_dim=model_cfg.node_h_dim,
             edge_in_dim=model_cfg.edge_in_dim,
@@ -61,7 +60,7 @@ class PartGVPLightning(pl.LightningModule):
         self.train_cfg = train_cfg
         self.criterion = nn.CrossEntropyLoss()
 
-        # Always bypass codebook for PartGVP
+        # bypass codebook for initial training
         self.bypass_codebook = True
 
     def forward(self, h_V, edge_index, h_E, seq=None, batch=None):
@@ -365,10 +364,10 @@ class PartGVPLightning(pl.LightningModule):
             return optimizer
 
 
-class PartGVPMultiLabelLightning(PartGVPLightning):
-    """PartGVP Lightning module for multi-label classification (Gene Ontology dataset).
+class BioBlobsMultiLabelLightning(BioBlobsLightning):
+    """BioBlobs Lightning module for multi-label classification (Gene Ontology dataset).
 
-    This class extends PartGVPLightning to handle multi-label classification with:
+    This class extends BioBlobsLightning to handle multi-label classification with:
     - BCEWithLogitsLoss instead of CrossEntropyLoss
     - FMax metric instead of accuracy
     - Updated logging for multi-label metrics
@@ -772,9 +771,6 @@ def create_partoken_resume_model_from_checkpoint(
                 setattr(model_cfg, key, hparams[key])
                 print(f"  • Updated {key}: {hparams[key]}")
 
-    # Load the PartGVP model to get the exact architecture
-    from train_lightling import PartGVPLightning
-
     # Temporarily use checkpoint's codebook_size for loading PartGVP model
     original_codebook_size = getattr(model_cfg, "codebook_size", None)
     checkpoint_codebook_size = None
@@ -792,7 +788,7 @@ def create_partoken_resume_model_from_checkpoint(
             f"  • Temporarily using checkpoint codebook_size: {checkpoint_codebook_size} for PartGVP loading"
         )
 
-    partgvp_model = PartGVPLightning.load_from_checkpoint(
+    partgvp_model = BioBlobsLightning.load_from_checkpoint(
         partgvp_checkpoint_path,
         model_cfg=model_cfg,
         train_cfg=train_cfg,
@@ -806,15 +802,15 @@ def create_partoken_resume_model_from_checkpoint(
             f"  • Restored config codebook_size: {original_codebook_size} for ParToken model"
         )
 
-    print(f"✓ PartGVP model loaded successfully")
+    print("✓ PartGVP model loaded successfully")
     print(
         f"  • Architecture: {sum(p.numel() for p in partgvp_model.parameters()):,} parameters"
     )
 
-    # Create new ParToken resume model with codebook enabled
-    from partoken_resume_lightning import ParTokenResumeTrainingLightning
+    # Create new BioBlobs resume model with codebook enabled
+    from bioblob_resume_lightning import BioBlobsTrainingCodebookModule
 
-    partoken_model = ParTokenResumeTrainingLightning(
+    partoken_model = BioBlobsTrainingCodebookModule(
         model_cfg=model_cfg,
         train_cfg=train_cfg,
         multistage_cfg=multistage_cfg,
@@ -949,15 +945,15 @@ def create_partoken_resume_multilabel_model_from_checkpoint(
     if original_codebook_size is not None:
         model_cfg.codebook_size = original_codebook_size
 
-    print(f"✓ PartGVP multi-label model loaded successfully")
+    print("✓ PartGVP multi-label model loaded successfully")
     print(
         f"  • Architecture: {sum(p.numel() for p in partgvp_model.parameters()):,} parameters"
     )
 
     # Create new ParToken resume multi-label model with codebook enabled
-    from partoken_resume_lightning import ParTokenResumeTrainingMultiLabelLightning
+    from bioblob_resume_lightning import BioBlobsTrainingCodebookMultiLabelModule
 
-    partoken_model = ParTokenResumeTrainingMultiLabelLightning(
+    partoken_model = BioBlobsTrainingCodebookMultiLabelModule(
         model_cfg=model_cfg,
         train_cfg=train_cfg,
         multistage_cfg=multistage_cfg,
@@ -987,7 +983,7 @@ def create_partoken_resume_multilabel_model_from_checkpoint(
 
     # Report transfer results
     if mismatched_keys:
-        print(f"⚠️ Shape mismatches found:")
+        print("⚠️ Shape mismatches found:")
         for mismatch in mismatched_keys:
             print(f"    {mismatch}")
 

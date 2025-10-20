@@ -1,7 +1,7 @@
 
 import os
 import pytorch_lightning as pl
-from partoken_model import ParTokenModel
+from bioblobs_model import ParTokenModel
 from utils.lr_schedule import get_cosine_schedule_with_warmup
 import torch
 import torch.nn as nn

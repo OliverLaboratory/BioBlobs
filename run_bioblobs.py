@@ -14,7 +14,7 @@ from utils.interpretability import (
     save_interpretability_results,
 )
 from utils.save_checkpoints import create_checkpoint_summary
-from train_lightling import PartGVPLightning, PartGVPMultiLabelLightning
+from train_lightling import BioBlobsLightning, BioBlobsMultiLabelLightning
 import json
 from hydra.utils import to_absolute_path
 
@@ -121,12 +121,12 @@ def main(cfg: DictConfig):
     # Create PartGVP model - choose appropriate class based on dataset
     if cfg.data.dataset_name == "geneontology":
         print("🧬 Using PartGVPMultiLabelLightning for multi-label Gene Ontology classification")
-        model_class = PartGVPMultiLabelLightning
+        model_class = BioBlobsMultiLabelLightning
         model = model_class(cfg.model, cfg.train, num_classes)
         model_type = "PartGVP Multi-Label"
     else:
         print("🧬 Using PartGVPLightning for single-label classification")
-        model_class = PartGVPLightning
+        model_class = BioBlobsLightning
         model = model_class(cfg.model, cfg.train, num_classes)
         model_type = "PartGVP"
 
