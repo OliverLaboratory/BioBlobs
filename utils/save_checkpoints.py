@@ -1,5 +1,5 @@
 """
-Checkpoint saving utilities for multi-stage ParToken training.
+Checkpoint saving utilities for multi-stage bioblobs training.
 
 This module provides functions to save specific model components at different
 training stages, allowing for fine-grained checkpoint management.
@@ -17,7 +17,7 @@ def save_stage0_checkpoint(trainer, model, output_dir: str, stage_info: Optional
     
     Args:
         trainer: PyTorch Lightning trainer instance
-        model: The ParToken Lightning model  
+        model: The bioblobs Lightning model  
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata
         
@@ -50,7 +50,7 @@ def save_stage1_checkpoint(trainer, model, output_dir: str, stage_info: Optional
     
     Args:
         trainer: PyTorch Lightning trainer instance
-        model: The ParToken Lightning model
+        model: The bioblobs Lightning model
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata
         
@@ -89,7 +89,7 @@ def save_stage_specific_checkpoint(
     
     Args:
         trainer: PyTorch Lightning trainer instance
-        model: The ParToken Lightning model
+        model: The bioblobs Lightning model
         stage_idx: Stage index (0 or 1)
         output_dir: Directory to save the checkpoint
         stage_info: Optional dictionary with stage metadata

@@ -1,4 +1,4 @@
-# Configuration for resuming ParToken training from PartGVP checkpoint
+# Configuration for resuming BioBlobs training from model checkpoint
 defaults:
   - _self_
 
@@ -42,8 +42,7 @@ model:
   tau_init: 1.0
   tau_min: 0.1
   tau_decay: 0.95
-  
-  # Codebook parameters (these will NOT be loaded from checkpoint since PartGVP doesn't use codebook)
+
   codebook_size: 256
   codebook_dim: null  # Will use node_h_dim[0]
   codebook_beta: 0.25

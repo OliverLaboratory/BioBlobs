@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Dict, Optional
 from omegaconf import DictConfig
-from bioblobs_model import ParTokenModel
+from bioblobs_model import BioBlobsModel
 from utils.interpretability import dataset_inter_results
 from utils.fmax_metric import FMaxMetric
 
@@ -22,8 +22,7 @@ class BioBlobsTrainingCodebookModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         
-        # Create ParToken model with codebook enabled
-        self.model = ParTokenModel(
+        self.model = BioBlobsModel(
             node_in_dim=model_cfg.node_in_dim,
             node_h_dim=model_cfg.node_h_dim,
             edge_in_dim=model_cfg.edge_in_dim,

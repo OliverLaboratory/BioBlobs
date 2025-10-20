@@ -1,7 +1,7 @@
 
 import os
 import pytorch_lightning as pl
-from bioblobs_model import ParTokenModel
+from bioblobs_model import BioBlobsModel
 from utils.lr_schedule import get_cosine_schedule_with_warmup
 import torch
 import torch.nn as nn
@@ -16,15 +16,15 @@ from utils.loss_schedulers import LossWeightScheduler
 
 
 
-class MultiStageParTokenLightning(pl.LightningModule):
-    """Multi-stage ParToken Lightning module with stage management."""
-    
+class MultiStageBioBlobsLightning(pl.LightningModule):
+    """Multi-stage BioBlobs Lightning module with stage management."""
+
     def __init__(self, model_cfg, train_cfg, multistage_cfg, num_classes):
         super().__init__()
         self.save_hyperparameters()
         
         # Create model with codebook initially disabled for stage 0
-        self.model = ParTokenModel(
+        self.model = BioBlobsModel(
             node_in_dim=model_cfg.node_in_dim,
             node_h_dim=model_cfg.node_h_dim,
             edge_in_dim=model_cfg.edge_in_dim,

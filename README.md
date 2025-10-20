@@ -40,7 +40,7 @@ python run_bioblobs.py \
 
 Resume from bioblobs checkpoint with VQ codebook:
 ```bash
-python run_partoken_resume.py \
+python run_bioblobs_codebook_resume.py \
     data.dataset_name=enzymecommission \
     resume.bioblobs_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-bioblobs-*.ckpt \
     multistage.stage0.epochs=50
