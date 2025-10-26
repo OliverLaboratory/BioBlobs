@@ -68,7 +68,7 @@ def run_interpretability_analysis(final_model, test_loader, cfg, custom_output_d
         }
 
 
-def extract_cluster_info_batch(
+def blob_info_batch(
     model, batch, device: Optional[torch.device] = None
 ) -> Dict[str, Any]:
     """
@@ -127,11 +127,34 @@ def extract_cluster_info_batch(
 
 
 def _is_multilabel_prediction(prob):
-    """Check if prediction is multi-label based on probability tensor shape and values."""
-    # For multi-label, probabilities are typically from sigmoid (BCEWithLogitsLoss)
-    # For single-label, probabilities are from softmax (CrossEntropyLoss)
-    # We assume multi-label if probabilities don't sum to ~1.0
-    return abs(prob.sum() - 1.0) > 0.1
+    """
+    Check if prediction is multi-label based on probability tensor shape and values.
+    
+    Multi-label predictions use sigmoid activation (probabilities don't sum to 1.0),
+    while single-label predictions use softmax activation (probabilities sum to 1.0).
+    
+    Args:
+        prob: Probability array or tensor for a single sample
+        
+    Returns:
+        bool: True if multi-label classification, False if single-label
+    """
+    # Convert to numpy if tensor
+    if isinstance(prob, torch.Tensor):
+        prob = prob.cpu().numpy()
+    
+    # Convert to numpy array if not already
+    prob = np.asarray(prob)
+    
+    # Check if any probability exceeds 1.0 (impossible for softmax)
+    if np.any(prob > 1.0):
+        return True
+    
+    # Check if probabilities sum deviates significantly from 1.0
+    # For softmax (single-label): sum ≈ 1.0
+    # For sigmoid (multi-label): sum can be arbitrary
+    prob_sum = float(np.sum(prob))
+    return abs(prob_sum - 1.0) > 0.1
 
 
 def _compute_multilabel_metrics(pred_prob, true_labels, threshold=0.5):
@@ -179,7 +202,7 @@ def analyze_single_protein(
     Analyze interpretability for a single protein.
 
     Args:
-        importance_data: Output from extract_cluster_importance_batch
+        importance_data: Output from blob_info_batch
         protein_idx: Index of protein to analyze
 
     Returns:
@@ -192,7 +215,7 @@ def analyze_single_protein(
     assignment = importance_data["assignment_matrix"][protein_idx]
 
     # Find valid (non-empty) clusters
-    cluster_sizes = assignment.sum(axis=0)  # Sum over residues
+    cluster_sizes = assignment.sum(axis=0)  
     valid_clusters = cluster_sizes > 0
     valid_importance = importance[valid_clusters]
     valid_cluster_indices = np.where(valid_clusters)[0]
@@ -207,7 +230,9 @@ def analyze_single_protein(
     if is_multilabel:
         # Multi-label classification metrics
         ml_metrics = _compute_multilabel_metrics(prob, true_label)
-        confidence = prob.max()  # Max probability as confidence
+        # Confidence for multi-label: maximum probability across all labels
+        # This represents the model's highest confidence for any single label
+        confidence = prob.max()
         is_correct = ml_metrics["exact_match"]
 
         result = {
@@ -294,7 +319,7 @@ def dataset_inter_results(
             batch = batch.to(device)
 
         # Extract importance data for this batch
-        importance_data = extract_cluster_info_batch(model, batch, device)
+        importance_data = blob_info_batch(model, batch, device)
         batch_stats.append(importance_data["cluster_stats"])
 
         # Analyze each protein in the batch
@@ -311,8 +336,8 @@ def dataset_inter_results(
     classification_types = [r["classification_type"] for r in all_results]
     is_multilabel = "multi-label" in classification_types
 
-    correct_predictions = [r for r in all_results if r["is_correct"]]
-    incorrect_predictions = [r for r in all_results if not r["is_correct"]]
+    # correct_predictions = [r for r in all_results if r["is_correct"]]
+    # incorrect_predictions = [r for r in all_results if not r["is_correct"]]
 
     aggregated_stats = {
         "total_proteins": len(all_results),
@@ -320,26 +345,26 @@ def dataset_inter_results(
         "avg_confidence": np.mean([r["confidence"] for r in all_results]),
     }
 
-    # Add performance metrics based on classification type
-    if is_multilabel:
-        # Multi-label metrics
-        aggregated_stats.update(
-            {
-                "exact_match_accuracy": len(correct_predictions) / len(all_results),
-                "avg_f1_score": np.mean([r["f1_score"] for r in all_results]),
-                "avg_precision": np.mean([r["precision"] for r in all_results]),
-                "avg_recall": np.mean([r["recall"] for r in all_results]),
-                "avg_predicted_labels": np.mean(
-                    [r["num_predicted_labels"] for r in all_results]
-                ),
-                "avg_true_labels": np.mean([r["num_true_labels"] for r in all_results]),
-            }
-        )
-    else:
-        # Single-label metrics
-        aggregated_stats.update(
-            {"accuracy": len(correct_predictions) / len(all_results)}
-        )
+    # # Add performance metrics based on classification type
+    # if is_multilabel:
+    #     # Multi-label metrics
+    #     aggregated_stats.update(
+    #         {
+    #             "exact_match_accuracy": len(correct_predictions) / len(all_results),
+    #             "avg_f1_score": np.mean([r["f1_score"] for r in all_results]),
+    #             "avg_precision": np.mean([r["precision"] for r in all_results]),
+    #             "avg_recall": np.mean([r["recall"] for r in all_results]),
+    #             "avg_predicted_labels": np.mean(
+    #                 [r["num_predicted_labels"] for r in all_results]
+    #             ),
+    #             "avg_true_labels": np.mean([r["num_true_labels"] for r in all_results]),
+    #         }
+    #     )
+    # else:
+    #     # Single-label metrics
+    #     aggregated_stats.update(
+    #         {"accuracy": len(correct_predictions) / len(all_results)}
+    #     )
 
     aggregated_stats.update(
         {
@@ -354,34 +379,34 @@ def dataset_inter_results(
             "avg_max_importance": np.mean(
                 [bs["avg_max_importance"] for bs in batch_stats]
             ),
-            "correct_vs_incorrect": {
-                "correct": {
-                    "count": len(correct_predictions),
-                    "avg_confidence": np.mean(
-                        [r["confidence"] for r in correct_predictions]
-                    )
-                    if correct_predictions
-                    else 0,
-                    "avg_concentration": np.mean(
-                        [r["importance_concentration"] for r in correct_predictions]
-                    )
-                    if correct_predictions
-                    else 0,
-                },
-                "incorrect": {
-                    "count": len(incorrect_predictions),
-                    "avg_confidence": np.mean(
-                        [r["confidence"] for r in incorrect_predictions]
-                    )
-                    if incorrect_predictions
-                    else 0,
-                    "avg_concentration": np.mean(
-                        [r["importance_concentration"] for r in incorrect_predictions]
-                    )
-                    if incorrect_predictions
-                    else 0,
-                },
-            },
+            # "correct_vs_incorrect": {
+            #     "correct": {
+            #         "count": len(correct_predictions),
+            #         "avg_confidence": np.mean(
+            #             [r["confidence"] for r in correct_predictions]
+            #         )
+            #         if correct_predictions
+            #         else 0,
+            #         "avg_concentration": np.mean(
+            #             [r["importance_concentration"] for r in correct_predictions]
+            #         )
+            #         if correct_predictions
+            #         else 0,
+            #     },
+            #     "incorrect": {
+            #         "count": len(incorrect_predictions),
+            #         "avg_confidence": np.mean(
+            #             [r["confidence"] for r in incorrect_predictions]
+            #         )
+            #         if incorrect_predictions
+            #         else 0,
+            #         "avg_concentration": np.mean(
+            #             [r["importance_concentration"] for r in incorrect_predictions]
+            #         )
+            #         if incorrect_predictions
+            #         else 0,
+            #     },
+            # },
         }
     )
 
@@ -434,21 +459,21 @@ def print_interpretability_summary(results: Dict[str, Any]) -> None:
     print("📊 INTERPRETABILITY ANALYSIS SUMMARY")
     print("=" * 60)
 
-    print("📈 Overall Performance:")
-    print(f"  • Total proteins analyzed: {stats['total_proteins']}")
-    print(f"  • Classification type: {stats['classification_type']}")
+    # print("📈 Overall Performance:")
+    # print(f"  • Total proteins analyzed: {stats['total_proteins']}")
+    # print(f"  • Classification type: {stats['classification_type']}")
 
-    if stats["classification_type"] == "multi-label":
-        print(f"  • Exact match accuracy: {stats['exact_match_accuracy']:.3f}")
-        print(f"  • Average F1 score: {stats['avg_f1_score']:.3f}")
-        print(f"  • Average precision: {stats['avg_precision']:.3f}")
-        print(f"  • Average recall: {stats['avg_recall']:.3f}")
-        print(f"  • Avg predicted labels: {stats['avg_predicted_labels']:.1f}")
-        print(f"  • Avg true labels: {stats['avg_true_labels']:.1f}")
-    else:
-        print(f"  • Accuracy: {stats['accuracy']:.3f}")
+    # if stats["classification_type"] == "multi-label":
+    #     print(f"  • Exact match accuracy: {stats['exact_match_accuracy']:.3f}")
+    #     print(f"  • Average F1 score: {stats['avg_f1_score']:.3f}")
+    #     print(f"  • Average precision: {stats['avg_precision']:.3f}")
+    #     print(f"  • Average recall: {stats['avg_recall']:.3f}")
+    #     print(f"  • Avg predicted labels: {stats['avg_predicted_labels']:.1f}")
+    #     print(f"  • Avg true labels: {stats['avg_true_labels']:.1f}")
+    # else:
+    #     print(f"  • Accuracy: {stats['accuracy']:.3f}")
 
-    print(f"  • Average confidence: {stats['avg_confidence']:.3f}")
+    # print(f"  • Average confidence: {stats['avg_confidence']:.3f}")
 
     print("\n🧬 Clustering Analysis:")
     print(f"  • Average clusters per protein: {stats['avg_clusters_per_protein']:.1f}")
@@ -461,50 +486,50 @@ def print_interpretability_summary(results: Dict[str, Any]) -> None:
     )
     print(f"  • Average max cluster importance: {stats['avg_max_importance']:.3f}")
 
-    print("\n✅ Correct vs ❌ Incorrect Predictions:")
-    correct_stats = stats["correct_vs_incorrect"]["correct"]
-    incorrect_stats = stats["correct_vs_incorrect"]["incorrect"]
+    # print("\n✅ Correct vs ❌ Incorrect Predictions:")
+    # correct_stats = stats["correct_vs_incorrect"]["correct"]
+    # incorrect_stats = stats["correct_vs_incorrect"]["incorrect"]
 
-    print(f"  ✅ Correct ({correct_stats['count']} proteins):")
-    print(f"     • Average confidence: {correct_stats['avg_confidence']:.3f}")
-    print(
-        f"     • Average attention concentration: {correct_stats['avg_concentration']:.3f}"
-    )
+    # print(f"  ✅ Correct ({correct_stats['count']} proteins):")
+    # print(f"     • Average confidence: {correct_stats['avg_confidence']:.3f}")
+    # print(
+    #     f"     • Average attention concentration: {correct_stats['avg_concentration']:.3f}"
+    # )
 
-    print(f"  ❌ Incorrect ({incorrect_stats['count']} proteins):")
-    print(f"     • Average confidence: {incorrect_stats['avg_confidence']:.3f}")
-    print(
-        f"     • Average attention concentration: {incorrect_stats['avg_concentration']:.3f}"
-    )
+    # print(f"  ❌ Incorrect ({incorrect_stats['count']} proteins):")
+    # print(f"     • Average confidence: {incorrect_stats['avg_confidence']:.3f}")
+    # print(
+    #     f"     • Average attention concentration: {incorrect_stats['avg_concentration']:.3f}"
+    # )
 
     # Analysis insights
-    conf_diff = correct_stats["avg_confidence"] - incorrect_stats["avg_confidence"]
-    conc_diff = (
-        correct_stats["avg_concentration"] - incorrect_stats["avg_concentration"]
-    )
+    # conf_diff = correct_stats["avg_confidence"] - incorrect_stats["avg_confidence"]
+    # conc_diff = (
+    #     correct_stats["avg_concentration"] - incorrect_stats["avg_concentration"]
+    # )
 
-    print("\n🔍 Key Insights:")
-    if conf_diff > 0.05:
-        print(
-            f"  • ✓ Correct predictions have notably higher confidence (+{conf_diff:.3f})"
-        )
-    else:
-        print(
-            f"  • ⚠️  Similar confidence between correct/incorrect predictions ({conf_diff:+.3f})"
-        )
+    # print("\n🔍 Key Insights:")
+    # if conf_diff > 0.05:
+    #     print(
+    #         f"  • ✓ Correct predictions have notably higher confidence (+{conf_diff:.3f})"
+    #     )
+    # else:
+    #     print(
+    #         f"  • ⚠️  Similar confidence between correct/incorrect predictions ({conf_diff:+.3f})"
+    #     )
 
-    if conc_diff > 0.05:
-        print(
-            f"  • ✓ Correct predictions show more focused attention (+{conc_diff:.3f})"
-        )
-    elif conc_diff < -0.05:
-        print(
-            f"  • ⚠️  Incorrect predictions show more focused attention ({conc_diff:+.3f})"
-        )
-    else:
-        print(
-            f"  • → Similar attention patterns between correct/incorrect ({conc_diff:+.3f})"
-        )
+    # if conc_diff > 0.05:
+    #     print(
+    #         f"  • ✓ Correct predictions show more focused attention (+{conc_diff:.3f})"
+    #     )
+    # elif conc_diff < -0.05:
+    #     print(
+    #         f"  • ⚠️  Incorrect predictions show more focused attention ({conc_diff:+.3f})"
+    #     )
+    # else:
+    #     print(
+    #         f"  • → Similar attention patterns between correct/incorrect ({conc_diff:+.3f})"
+        # )
 
     print("=" * 60)
 
@@ -516,112 +541,3 @@ def load_interpretability_results(file_path: str) -> Dict[str, Any]:
     print(f"✓ Interpretability results loaded from {file_path}")
     return results
 
-
-# # Example usage function
-# def run_interpretability_analysis_example(model, test_loader, device=None, output_dir="./interpretability_outputs"):
-#     """
-#     Example function showing how to run complete interpretability analysis.
-
-#     Args:
-#         model: Trained bioblobs model
-#         test_loader: Test DataLoader
-#         device: Device to run on
-#         output_dir: Directory to save outputs
-#     """
-#     output_dir = Path(output_dir)
-#     output_dir.mkdir(parents=True, exist_ok=True)
-
-#     print("🔍 Running interpretability analysis...")
-
-#     # Run batch analysis
-#     results = batch_interpretability_analysis(
-#         model=model,
-#         dataloader=test_loader,
-#         device=device,
-#         max_batches=10,  # Limit for example
-#         save_path=str(output_dir / "interpretability_results.json")
-#     )
-
-#     # Print summary
-#     print_interpretability_summary(results)
-
-#     # Create visualizations
-#     plot_importance_distribution(
-#         results,
-#         save_path=str(output_dir / "importance_distribution.png")
-#     )
-
-#     print(f"\n✅ Interpretability analysis complete!")
-#     print(f"📁 Results saved to: {output_dir}")
-
-#     return results
-
-
-# def plot_importance_distribution(results: Dict[str, Any], save_path: Optional[str] = None) -> None:
-#     """Plot distribution of cluster importance scores."""
-#     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-
-#     # Extract data
-#     concentrations = [p['importance_concentration'] for p in results['protein_analyses']]
-#     confidences = [p['confidence'] for p in results['protein_analyses']]
-#     num_clusters = [p['num_valid_clusters'] for p in results['protein_analyses']]
-#     correct = [p['is_correct'] for p in results['protein_analyses']]
-
-#     # Plot 1: Importance concentration distribution
-#     axes[0, 0].hist(concentrations, bins=30, alpha=0.7, edgecolor='black')
-#     axes[0, 0].set_xlabel('Importance Concentration')
-#     axes[0, 0].set_ylabel('Frequency')
-#     axes[0, 0].set_title('Distribution of Attention Concentration')
-#     axes[0, 0].axvline(np.mean(concentrations), color='red', linestyle='--', label=f'Mean: {np.mean(concentrations):.3f}')
-#     axes[0, 0].legend()
-
-#     # Plot 2: Confidence vs Concentration
-#     correct_mask = np.array(correct)
-#     axes[0, 1].scatter(np.array(concentrations)[correct_mask], np.array(confidences)[correct_mask],
-#                       alpha=0.6, label='Correct', color='green')
-#     axes[0, 1].scatter(np.array(concentrations)[~correct_mask], np.array(confidences)[~correct_mask],
-#                       alpha=0.6, label='Incorrect', color='red')
-#     axes[0, 1].set_xlabel('Importance Concentration')
-#     axes[0, 1].set_ylabel('Prediction Confidence')
-#     axes[0, 1].set_title('Confidence vs Attention Concentration')
-#     axes[0, 1].legend()
-
-#     # Plot 3: Number of clusters distribution
-#     axes[1, 0].hist(num_clusters, bins=range(1, max(num_clusters)+2), alpha=0.7, edgecolor='black')
-#     axes[1, 0].set_xlabel('Number of Valid Clusters')
-#     axes[1, 0].set_ylabel('Frequency')
-#     axes[1, 0].set_title('Distribution of Cluster Count')
-
-#     # Plot 4: Accuracy by concentration quartiles
-#     concentration_quartiles = np.percentile(concentrations, [25, 50, 75])
-#     quartile_labels = ['Q1 (Low)', 'Q2', 'Q3', 'Q4 (High)']
-#     quartile_accuracies = []
-
-#     for i in range(4):
-#         if i == 0:
-#             mask = np.array(concentrations) <= concentration_quartiles[0]
-#         elif i == 3:
-#             mask = np.array(concentrations) > concentration_quartiles[2]
-#         else:
-#             mask = (np.array(concentrations) > concentration_quartiles[i-1]) & \
-#                    (np.array(concentrations) <= concentration_quartiles[i])
-
-#         quartile_acc = np.mean(np.array(correct)[mask]) if mask.any() else 0
-#         quartile_accuracies.append(quartile_acc)
-
-#     axes[1, 1].bar(quartile_labels, quartile_accuracies, alpha=0.7, edgecolor='black')
-#     axes[1, 1].set_ylabel('Accuracy')
-#     axes[1, 1].set_title('Accuracy by Attention Concentration Quartile')
-#     axes[1, 1].set_ylim(0, 1)
-
-#     # Add values on bars
-#     for i, acc in enumerate(quartile_accuracies):
-#         axes[1, 1].text(i, acc + 0.02, f'{acc:.3f}', ha='center')
-
-#     plt.tight_layout()
-
-#     if save_path:
-#         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-#         print(f"✓ Importance distribution plot saved to {save_path}")
-
-#     plt.show()

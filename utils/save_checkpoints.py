@@ -11,12 +11,13 @@ from datetime import datetime
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
 
+
 def evaluate_checkpoints(
     checkpoint_callback, model_class, cfg, num_classes, test_loader, wandb_logger, model
 ):
     """
     Test both best and last checkpoints on the test set.
-    
+
     Args:
         checkpoint_callback: PyTorch Lightning checkpoint callback
         model_class: Model class to instantiate (BioBlobsLightning or BioBlobsMultiLabelLightning)
@@ -25,7 +26,7 @@ def evaluate_checkpoints(
         test_loader: Test data loader
         wandb_logger: Weights & Biases logger
         model: Currently trained model (fallback if checkpoints not found)
-    
+
     Returns:
         tuple: (results_summary dict, final_model for interpretability)
     """
@@ -44,7 +45,6 @@ def evaluate_checkpoints(
             "trainable_parameters": sum(
                 p.numel() for p in model.parameters() if p.requires_grad
             ),
-            "mode": "BioBlobs",
         },
         "checkpoints": {},
     }

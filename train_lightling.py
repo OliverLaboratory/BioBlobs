@@ -334,7 +334,7 @@ class BioBlobsLightning(pl.LightningModule):
         Returns:
             Dictionary containing interpretability results
         """
-        # BioBlobs supports interpretability since it has cluster importance scores
+
         return dataset_inter_results(
             model=self, dataloader=dataloader, device=device, max_batches=max_batches
         )
