@@ -14,27 +14,6 @@ import math
 from collections import defaultdict
 
 
-def _get_label_key(pinfo, dataset_name):
-    """
-    Extract the appropriate label key from protein info based on dataset type.
-    
-    Args:
-        pinfo: Protein information dictionary
-        dataset_name: Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
-    
-    Returns:
-        str: The label key for the protein
-    """
-    if dataset_name == "enzymecommission":
-        return pinfo["EC"].split(".")[0]
-    elif dataset_name == "geneontology":
-        return pinfo["molecular_function"]
-    elif dataset_name == "scope":
-        return pinfo["SCOP-FA"]
-    else:
-        raise ValueError(f"Unknown dataset_name: {dataset_name}")
-
-
 def _normalize(tensor, dim=-1):
     """
     Normalizes a `torch.Tensor` along dimension `dim` without `nan`s.
@@ -59,7 +38,6 @@ def _rbf(D, D_min=0.0, D_max=20.0, D_count=16, device="cpu"):
 
     RBF = torch.exp(-(((D_expand - D_mu) / D_sigma) ** 2))
     return RBF
-
 
 
 def create_dataloader(dataset, batch_size=128, num_workers=0, shuffle=True):
@@ -153,7 +131,9 @@ class ProteinMultiLabelDataset(data.Dataset):
                 protein["coords"], device=self.device, dtype=torch.float32
             )
             seq = torch.as_tensor(
-                [self.letter_to_num.get(a, 20) for a in protein["seq"]],  # Use 20 (X) as default for unknown amino acids
+                [
+                    self.letter_to_num.get(a, 20) for a in protein["seq"]
+                ],  # Use 20 (X) as default for unknown amino acids
                 device=self.device,
                 dtype=torch.long,
             )
@@ -162,24 +142,28 @@ class ProteinMultiLabelDataset(data.Dataset):
             if len(seq) != coords.shape[0]:
                 if len(seq) > coords.shape[0]:
                     # Truncate sequence to match coordinates
-                    seq = seq[:coords.shape[0]]
+                    seq = seq[: coords.shape[0]]
                 else:
                     # Pad sequence with unknown amino acid token (20 = 'X')
                     pad_length = coords.shape[0] - len(seq)
-                    padding = torch.full((pad_length,), 20, device=self.device, dtype=torch.long)
+                    padding = torch.full(
+                        (pad_length,), 20, device=self.device, dtype=torch.long
+                    )
                     seq = torch.cat([seq, padding])
-            
+
             # Validate sequence indices are within bounds (0-20 for the embedding layer)
             if torch.any(seq >= 21) or torch.any(seq < 0):
                 # Clamp out-of-bounds values to safe range
                 seq = torch.clamp(seq, 0, 20)
-                print(f"Warning: Clamped out-of-bounds sequence indices for protein {name}")
-            
+                print(
+                    f"Warning: Clamped out-of-bounds sequence indices for protein {name}"
+                )
+
             assert len(seq) == coords.shape[0], (len(seq), coords.shape[0])
             # Create mask for valid residues (finite coordinates)
             mask = torch.isfinite(coords.sum(dim=(1, 2)))
             coords[~mask] = np.inf
-            
+
             # Filter sequence to match valid coordinates
             # This ensures seq length matches the number of valid residues
             # seq = seq[mask]
@@ -215,7 +199,9 @@ class ProteinMultiLabelDataset(data.Dataset):
                     y = torch.tensor(label, dtype=torch.long, device=self.device)
             else:
                 # Default empty multi-label (all zeros)
-                y = torch.zeros(self.num_classes, dtype=torch.float32, device=self.device)
+                y = torch.zeros(
+                    self.num_classes, dtype=torch.float32, device=self.device
+                )
 
         data = torch_geometric.data.Data(
             x=X_ca,
@@ -288,15 +274,15 @@ class ProteinMultiLabelDataset(data.Dataset):
         return vec
 
 
-
-
-
 def get_gene_ontology_dataset(
-    split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
+    split="structure",
+    split_similarity_threshold=0.7,
+    data_dir="./data",
+    test_mode=False,
 ):
     """
     Get train, validation, and test datasets for the specified protein classification task.
-    
+
     This function splits the data BEFORE converting to structures to preserve correct indices
     and avoid issues with filtering during conversion.
 
@@ -311,10 +297,11 @@ def get_gene_ontology_dataset(
     """
     # Load the appropriate task
     task = GeneOntologyTask(
-        split=split, split_similarity_threshold=split_similarity_threshold, root=data_dir
+        split=split,
+        split_similarity_threshold=split_similarity_threshold,
+        root=data_dir,
     )
     token_map = task.token_map
-    num_classes = task.num_classes
     dataset = task.dataset
 
     train_index, val_index, test_index = (
@@ -324,7 +311,6 @@ def get_gene_ontology_dataset(
     )
 
     print(f"Token map has {len(token_map)}")
-    num_classes = len(token_map)
 
     # Create data directory if it doesn't exist
     data_dir = os.path.join(data_dir, "gene_ontology", split)
@@ -336,20 +322,18 @@ def get_gene_ontology_dataset(
     test_json_path = os.path.join(data_dir, "gene_ontology_test.json")
     token_map_path = os.path.join(data_dir, "gene_ontology_token_map.json")
 
-    # Paths for filtered indices
-    train_indices_path = os.path.join(data_dir, "gene_ontology_train_filtered_indices.json")
-    val_indices_path = os.path.join(data_dir, "gene_ontology_val_filtered_indices.json")
-    test_indices_path = os.path.join(data_dir, "gene_ontology_test_filtered_indices.json")
-
-    if (os.path.exists(train_json_path) and os.path.exists(val_json_path) and
-        os.path.exists(test_json_path) and os.path.exists(token_map_path)):
-        
+    if (
+        os.path.exists(train_json_path)
+        and os.path.exists(val_json_path)
+        and os.path.exists(test_json_path)
+        and os.path.exists(token_map_path)
+    ):
         print("JSON files for all splits already exist. Loading from files...")
-        
+
         # Load token map
         with open(token_map_path, "r") as f:
             token_map = json.load(f)
-            
+
         # Load structures for each split
         with open(train_json_path, "r") as f:
             train_structures = json.load(f)
@@ -357,33 +341,41 @@ def get_gene_ontology_dataset(
             val_structures = json.load(f)
         with open(test_json_path, "r") as f:
             test_structures = json.load(f)
-            
-        print(f"Loaded {len(train_structures)} train, {len(val_structures)} val, {len(test_structures)} test structures")
-        
+
+        print(
+            f"Loaded {len(train_structures)} train, {len(val_structures)} val, {len(test_structures)} test structures"
+        )
+
         # Create datasets from loaded structures
-        train_dataset = ProteinMultiLabelDataset(train_structures, num_classes=len(token_map), device="cpu")
-        val_dataset = ProteinMultiLabelDataset(val_structures, num_classes=len(token_map), device="cpu")
-        test_dataset = ProteinMultiLabelDataset(test_structures, num_classes=len(token_map), device="cpu")
-        
+        train_dataset = ProteinMultiLabelDataset(
+            train_structures, num_classes=len(token_map), device="cpu"
+        )
+        val_dataset = ProteinMultiLabelDataset(
+            val_structures, num_classes=len(token_map), device="cpu"
+        )
+        test_dataset = ProteinMultiLabelDataset(
+            test_structures, num_classes=len(token_map), device="cpu"
+        )
+
     else:
         print("Converting proteins to structures with proper splitting...")
-        
+
         # Get the full protein generator
         protein_generator = dataset.proteins(resolution="atom")
         print("Number of atom level proteins:", len(protein_generator))
-        
+
         # Convert generator to list to enable indexing
         all_proteins = list(protein_generator)
         print(f"Loaded {len(all_proteins)} proteins into memory")
-        
+
         # Create generators for each split using indices
         def create_split_generator(protein_list, indices):
             for idx in indices:
                 if idx < len(protein_list):
                     yield protein_list[idx]
-        
-        # Build token_map from all proteins to ensure all labels are included
-        print("\nBuilding token map from all proteins...")
+
+        # # Build token_map from all proteins to ensure all labels are included
+        # print("\nBuilding token map from all proteins...")
 
         train_generator = create_split_generator(all_proteins, train_index)
         val_generator = create_split_generator(all_proteins, val_index)
@@ -391,13 +383,19 @@ def get_gene_ontology_dataset(
 
         # Convert each split to structures
         print("Converting train split...")
-        train_structures, _, _ = generator_to_structures(train_generator, "geneontology", token_map, train_index)
-        
+        train_structures, _, _ = generator_to_structures(
+            train_generator, token_map, train_index
+        )
+
         print("Converting validation split...")
-        val_structures, _, _ = generator_to_structures(val_generator, "geneontology", token_map, val_index)
-        
+        val_structures, _, _ = generator_to_structures(
+            val_generator, token_map, val_index
+        )
+
         print("Converting test split...")
-        test_structures, _, _ = generator_to_structures(test_generator, "geneontology", token_map, test_index)
+        test_structures, _, _ = generator_to_structures(
+            test_generator, token_map, test_index
+        )
 
         # Save structures to JSON files
         print("Saving structures to JSON files...")
@@ -411,9 +409,15 @@ def get_gene_ontology_dataset(
             json.dump(token_map, f)
 
         # Create datasets from structures
-        train_dataset = ProteinMultiLabelDataset(train_structures, num_classes=len(token_map), device="cpu")
-        val_dataset = ProteinMultiLabelDataset(val_structures, num_classes=len(token_map), device="cpu")
-        test_dataset = ProteinMultiLabelDataset(test_structures, num_classes=len(token_map), device="cpu")
+        train_dataset = ProteinMultiLabelDataset(
+            train_structures, num_classes=len(token_map), device="cpu"
+        )
+        val_dataset = ProteinMultiLabelDataset(
+            val_structures, num_classes=len(token_map), device="cpu"
+        )
+        test_dataset = ProteinMultiLabelDataset(
+            test_structures, num_classes=len(token_map), device="cpu"
+        )
 
     # Apply test mode if requested
     if test_mode:
@@ -421,34 +425,36 @@ def get_gene_ontology_dataset(
         train_limit = min(100, len(train_dataset))
         val_limit = min(20, len(val_dataset))
         test_limit = min(20, len(test_dataset))
-        
+
         # Create subset datasets
         train_indices = list(range(train_limit))
         val_indices = list(range(val_limit))
         test_indices = list(range(test_limit))
-        
+
         train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
         val_dataset = torch.utils.data.Subset(val_dataset, val_indices)
         test_dataset = torch.utils.data.Subset(test_dataset, test_indices)
-        
-        print(f"Test mode datasets: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test")
+
+        print(
+            f"Test mode datasets: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test"
+        )
 
     print("\n✅ Dataset loading completed!")
-    print(f"📊 Final sizes: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test")
+    print(
+        f"📊 Final sizes: {len(train_dataset)} train, {len(val_dataset)} val, {len(test_dataset)} test"
+    )
     print(f"🏷️  Number of classes: {len(token_map)}")
-    
+
     return train_dataset, val_dataset, test_dataset, len(token_map)
 
 
-
-def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None, original_indices=None):
+def generator_to_structures(generator, token_map=None, original_indices=None):
     """
     Convert generator of proteins to list of structures with name, sequence, and coordinates.
     Missing backbone atoms get infinite coordinates and will be filtered by ProteinGraphDataset.
 
     Args:
         generator: Generator yielding protein data dictionaries
-        dataset_name: Name of the dataset for label extraction
         token_map: Pre-computed mapping from labels to integers (required)
         original_indices: List of original indices corresponding to the generator items (optional)
 
@@ -479,7 +485,9 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
     print("Collecting data...")
     for i, protein_data in enumerate(tqdm(generator, desc="Collecting data")):
-        temp_data.append((protein_data, original_indices[i] if original_indices is not None else i))
+        temp_data.append(
+            (protein_data, original_indices[i] if original_indices is not None else i)
+        )
 
     print("Processing structures...")
     for protein_data, original_idx in tqdm(temp_data, desc="Converting proteins"):
@@ -492,10 +500,10 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
         seq = pinfo["sequence"]
 
         # Get label
-        tokens = [token_map[i] for i in pinfo['molecular_function']]
+        tokens = [token_map[i] for i in pinfo["molecular_function"]]
         label = np.zeros(len(token_map), dtype=bool)
         label[tokens] = True
-        
+
         # Extract coordinates and atom info
         x = ainfo["x"]
         y = ainfo["y"]
@@ -527,11 +535,11 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
         total_residues = len(residues)
         completion_rate = complete_residues / total_residues if total_residues else 0.0
-        
+
         # Filter out proteins with completion rate < 0.5
         if completion_rate < 0.5:
             continue
-            
+
         if completion_rate < 1.0:
             filtering_stats["partial_residues"] += 1
             partial_proteins.append(
@@ -553,7 +561,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
 
         # Truncate sequence to match coords length if needed and use the adjusted
         # sequence everywhere to avoid mismatches between seq and coords.
-        adjusted_seq = seq[:len(coords)] if len(seq) > len(coords) else seq
+        adjusted_seq = seq[: len(coords)] if len(seq) > len(coords) else seq
 
         # If sequence and coords lengths still mismatch (coords longer), pad the
         # adjusted sequence with unknown residue symbol 'X' to match coords length.
@@ -604,8 +612,10 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     return structures, token_map, filtered_indices
 
 
-
 if __name__ == "__main__":
     get_gene_ontology_dataset(
-        split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
+        split="structure",
+        split_similarity_threshold=0.7,
+        data_dir="./data",
+        test_mode=False,
     )

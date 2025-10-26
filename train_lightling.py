@@ -558,7 +558,6 @@ class BioBlobsMultiLabelLightning(BioBlobsLightning):
             h_V, edge_index=batch.edge_index, h_E=h_E, seq=seq, batch=batch.batch
         )
 
-        # Fix label shape for multi-label: PyTorch Geometric concatenates but we need to stack
         batch_size = logits.size(0)
         num_classes = logits.size(1)
         labels = batch.y.view(batch_size, num_classes).float()

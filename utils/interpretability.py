@@ -10,6 +10,62 @@ import numpy as np
 from typing import Dict, Optional, Any
 import json
 from pathlib import Path
+import os
+
+
+def run_interpretability_analysis(final_model, test_loader, cfg, custom_output_dir):
+    """
+    Run interpretability analysis on the test set.
+    
+    Args:
+        final_model: The best trained model
+        test_loader: Test data loader
+        cfg: Configuration object
+        custom_output_dir: Directory to save interpretability results
+    
+    Returns:
+        dict: Interpretability results summary for the results JSON
+    """
+    if not cfg.interpretability.get("enabled", True):
+        print("Interpretability analysis disabled")
+        return {"enabled": False}
+
+    print("\nINTERPRETABILITY ANALYSIS")
+    print("=" * 70)
+
+    # Create interpretability output directory
+    interp_output_dir = os.path.join(custom_output_dir, "interpretability")
+    os.makedirs(interp_output_dir, exist_ok=True)
+
+    # Run analysis on test set
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    print("Running interpretability analysis on test set...")
+    interp_results = final_model.get_inter_info(
+        test_loader,
+        device=device,
+        max_batches=cfg.interpretability.get("max_batches", None),
+    )
+
+    if interp_results is not None:
+        # Save results
+        results_path = os.path.join(interp_output_dir, "test_interpretability.json")
+        save_interpretability_results(interp_results, results_path)
+
+        # Print summary
+        print_interpretability_summary(interp_results)
+
+        return {
+            "enabled": True,
+            "results_path": results_path,
+            "summary": interp_results["aggregated_stats"],
+        }
+    else:
+        print("Interpretability analysis failed")
+        return {
+            "enabled": False,
+            "error": "Analysis failed",
+        }
 
 
 def extract_cluster_info_batch(
