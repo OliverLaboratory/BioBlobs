@@ -17,7 +17,7 @@ resume:
 
 # Data configuration
 data:
-  dataset_name: geneontology
+  dataset_name: go
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /home/wangx86/partoken/partoken-protein/data

@@ -1,0 +1,100 @@
+hydra:
+  run:
+    dir: ./outputs/${train.wandb_project}/${data.dataset_name}/${data.split}/${now:%Y-%m-%d-%H-%M-%S}
+  output_subdir: null
+
+data: 
+  dataset_name: go
+  split: structure
+  split_similarity_threshold: 0.7
+  data_dir: /home/wangx86/iclr2026/BioBlobs/data
+  test_mode: false  
+
+model:
+  node_in_dim: [6, 3]
+  node_h_dim: [100, 16]
+  edge_in_dim: [32, 1]
+  edge_h_dim: [32, 1]
+  num_layers: 2
+  drop_rate: 0.1
+  pooling: sum
+  seq_in: false
+  # Partitioner hyperparameters
+  max_clusters: 3
+  nhid: 50
+  k_hop: 1
+  cluster_size_max: 15
+  termination_threshold: 0.95
+  tau_init: 1.0
+  tau_min: 0.1
+  tau_decay: 0.95
+  # Codebook hyperparameters
+  codebook_size: 512
+  codebook_dim: null  # If null, uses cluster feature dim
+  codebook_beta: 0.25
+  codebook_decay: 0.99
+  codebook_eps: 1e-5
+  codebook_distance: l2
+  codebook_cosine_normalize: false
+  # Loss weights (will be overridden by stage configs)
+  lambda_vq: 0.0
+  lambda_ent: 0.0
+  lambda_psc: 0.0
+  psc_temp: 0.3
+
+train:
+  # Global hyperparameters (shared across all stages)
+  batch_size: 256
+  num_workers: 8
+  seed: 42
+  models_dir: ./saved_models
+  use_wandb: false
+  wandb_project: bioblobs_multistage_go
+  # Cosine learning rate schedule with warmup
+  use_cosine_schedule: true
+  warmup_epochs: 5
+  
+  # Stage 0: Baseline training (bypass codebook)
+  stage0:
+    name: baseline
+    epochs: 30
+    lr: 1e-3
+    loss_weights:
+      lambda_vq: 0.0
+      lambda_ent: 0.0
+      lambda_psc: 0.0
+  
+  # Stage 1: Joint fine-tuning (with codebook)
+  stage1:
+    name: joint_fine_tuning
+    epochs: 30
+    lr: 5e-4  # Lower learning rate for fine-tuning
+    
+    # Fixed loss weights
+    loss_weights:
+      lambda_vq: 1.0
+      lambda_ent: 0.1
+      lambda_psc: 0.5
+    
+    # Loss weight ramping (optional)
+    loss_ramp:
+      enabled: false
+      ramp_epochs: 15
+      initial_weights:
+        lambda_vq: 0.1
+        lambda_ent: 0.01
+        lambda_psc: 0.05
+      final_weights:
+        lambda_vq: 1.0
+        lambda_ent: 0.1
+        lambda_psc: 0.5
+    
+    # Freeze codebook in final epochs (optional)
+    freeze_codebook_final:
+      enabled: false
+      epochs: 5
+
+# Interpretability settings
+interpretability:
+  enabled: true
+  max_batches: 20  # Limit for interpretability analysis

@@ -30,7 +30,7 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 Train on Enzyme Commission dataset:
 ```bash
 python run_bioblobs.py \
-    data.dataset_name=enzymecommission \
+    data.dataset_name=ec \
     data.split=random \
     train.epochs=120 \
     train.use_wandb=true
@@ -41,7 +41,7 @@ python run_bioblobs.py \
 Resume from bioblobs checkpoint with VQ codebook:
 ```bash
 python run_bioblobs_codebook_resume.py \
-    data.dataset_name=enzymecommission \
+    data.dataset_name=ec \
     resume.bioblobs_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-bioblobs-*.ckpt \
     multistage.stage0.epochs=50
 ```

@@ -17,7 +17,7 @@ resume:
 
 # Data configuration
 data:
-  dataset_name: enzymecommission
+  dataset_name: ec
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /root/ICLR2026/partoken-protein/data

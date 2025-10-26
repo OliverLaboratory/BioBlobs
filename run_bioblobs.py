@@ -51,7 +51,7 @@ def main(cfg: DictConfig):
         test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False
     )
 
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         print("Using BioBlobsMultiLabelLightning for multi-label GO classification")
         model_class = BioBlobsMultiLabelLightning
         model = model_class(cfg.model, cfg.train, num_classes)
@@ -77,7 +77,7 @@ def main(cfg: DictConfig):
         )
 
     # Checkpoint callback - use appropriate metric based on task type
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         filename_template = "best-bioblobs-{epoch:02d}-{val_fmax:.3f}"
         monitor_metric = "val_fmax"
     else:

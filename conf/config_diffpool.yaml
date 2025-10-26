@@ -4,7 +4,7 @@ hydra:
   output_subdir: null
 
 data:
-  dataset_name: enzymecommission
+  dataset_name: ec
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /sb/oliver_lab/data/wangx86/partoken-protein/gvp-baseline/data

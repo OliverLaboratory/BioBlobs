@@ -18,16 +18,16 @@ def _get_label_key(pinfo, dataset_name):
     
     Args:
         pinfo: Protein information dictionary
-        dataset_name: Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
+        dataset_name: Name of the dataset ('ec', 'proteinfamily', 'scop-fa')
     
     Returns:
         str: The label key for the protein
     """
-    if dataset_name == "enzymecommission":
+    if dataset_name == "ec":
         return pinfo["EC"].split(".")[0]
-    elif dataset_name == "geneontology":
+    elif dataset_name == "go":
         return pinfo["molecular_function"]
-    elif dataset_name == "scope":
+    elif dataset_name == "scop-fa":
         return pinfo["SCOP-FA"]
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
@@ -276,7 +276,7 @@ class ProteinClassificationDataset(data.Dataset):
         return vec
 
 
-def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None, original_indices=None):
+def generator_to_structures(generator, dataset_name="ec", token_map=None, original_indices=None):
     """
     Convert generator of proteins to list of structures with name, sequence, and coordinates.
     Missing backbone atoms get infinite coordinates and will be filtered by ProteinGraphDataset.
@@ -455,7 +455,7 @@ def get_dataset(
     and avoid issues with filtering during conversion.
 
     Args:
-        dataset_name (str): Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
+        dataset_name (str): Name of the dataset ('ec', 'proteinfamily', 'scop-fa')
         split (str): Split method ('random', 'sequence', 'structure')
         split_similarity_threshold (float): Similarity threshold for splitting
         data_dir (str): Directory to store/load data files
@@ -465,7 +465,7 @@ def get_dataset(
         tuple: (train_dataset, val_dataset, test_dataset, num_classes)
     """
     # Load the appropriate task
-    if dataset_name == "enzymecommission":
+    if dataset_name == "ec":
         from proteinshake.tasks import EnzymeClassTask
 
         task = EnzymeClassTask(
@@ -496,7 +496,7 @@ def get_dataset(
         )
         token_map = task.token_map
 
-    elif dataset_name == "scope":
+    elif dataset_name == "scop-fa":
         from proteinshake.tasks import StructuralClassTask
 
         task = StructuralClassTask(
@@ -511,7 +511,7 @@ def get_dataset(
         )
         token_map = task.token_map
 
-    elif dataset_name == "geneontology":
+    elif dataset_name == "go":
         # Import and use the gene ontology dataset function
         from utils.go_dataset import get_gene_ontology_dataset
         return get_gene_ontology_dataset(

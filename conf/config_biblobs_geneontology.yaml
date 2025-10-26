@@ -4,7 +4,7 @@ hydra:
   output_subdir: null
 
 data: 
-  dataset_name: geneontology
+  dataset_name: go
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /workspace/BIOBLOBS/partoken-protein/data

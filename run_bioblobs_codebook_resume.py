@@ -165,7 +165,7 @@ def main(cfg: DictConfig):
     print("\n🔄 RESUMING TRAINING FROM BIOBLOBS CHECKPOINT")
     print("=" * 70)
 
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         print(
             "🧬 Using multi-label BioBlobs resume model for Gene Ontology classification"
         )
@@ -287,7 +287,7 @@ def main(cfg: DictConfig):
         )
 
     # Checkpoint callback - use appropriate metric based on dataset type
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         filename_template = "best-bioblobs-{epoch:02d}-{val_fmax:.3f}"
         monitor_metric = "val_fmax"
     else:
@@ -351,7 +351,7 @@ def main(cfg: DictConfig):
     }
 
     # Test best checkpoint - use the correct model class based on dataset
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         from bioblob_resume_lightning import BioBlobsTrainingCodebookMultiLabelModule
 
         test_model_class = BioBlobsTrainingCodebookMultiLabelModule
