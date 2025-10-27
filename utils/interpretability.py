@@ -49,7 +49,7 @@ def run_interpretability_analysis(final_model, test_loader, cfg, custom_output_d
 
     if interp_results is not None:
         # Save results
-        results_path = os.path.join(interp_output_dir, "test_interpretability.json")
+        results_path = os.path.join(interp_output_dir, "interpret_blob.json")
         save_interpretability_results(interp_results, results_path)
 
         # Print summary
@@ -278,8 +278,8 @@ def analyze_single_protein(
             "cluster_sizes": cluster_sizes[valid_clusters].tolist(),
             "importance_scores": valid_importance.tolist(),
             "importance_concentration": float(importance_concentration),
-            "top_cluster_indices": all_clusters[:5].tolist(),  # Top 5 clusters
-            "top_cluster_importance": valid_importance[importance_ranking[:5]].tolist(),
+            "cluster_indices": all_clusters.tolist(),  # All clusters
+            "cluster_importance": valid_importance[importance_ranking].tolist(),
         }
     )
 

@@ -140,7 +140,7 @@ def train_and_evaluate_stage(
     print("=" * 70)
     
     # Log stage transition to WandB
-    if trainer.logger is not None:
+    if trainer.logger is not None and isinstance(trainer.logger, WandbLogger):
         trainer.logger.experiment.log({
             "stage/current": stage_idx,
             "stage/name": stage_name,
@@ -162,7 +162,7 @@ def train_and_evaluate_stage(
     test_results = trainer.test(model, test_loader)
     
     # Log test results to WandB with stage prefix
-    if trainer.logger is not None and test_results:
+    if trainer.logger is not None and isinstance(trainer.logger, WandbLogger) and test_results:
         stage_test_metrics = {f"stage{stage_idx}/{k}": v for k, v in test_results[0].items()}
         trainer.logger.experiment.log(stage_test_metrics)
     
@@ -440,7 +440,7 @@ def main(cfg: DictConfig):
     save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, init_stats, wandb_logger)
     
     # Finish WandB run after both stages complete
-    if wandb_logger is not None:
+    if wandb_logger is not None and cfg.train.use_wandb:
         wandb.finish()
 
 
