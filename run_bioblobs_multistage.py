@@ -1,11 +1,7 @@
 """
-Example script showing how to use MultiStageBioBlobsLightning for progressive training.
-
-This demonstrates:
-1. Stage 0: Train baseline model (bypass codebook)
-2. Stage 1: Fine-tune with codebook enabled
-3. Access to global hyperparameters (batch_size, num_workers, etc.)
-4. Stage-specific hyperparameters (epochs, lr, loss_weights)
+BioBlobs Multi-Stage Training Script
+Stage 0: Train baseline model (bypass codebook)
+Stage 1: Fine-tune with codebook enabled
 """
 
 import os

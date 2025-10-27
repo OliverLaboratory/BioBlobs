@@ -59,7 +59,7 @@ train:
   # Stage 0: Baseline training (bypass codebook)
   stage0:
     name: baseline
-    epochs: 60
+    epochs: 120
     lr: 1e-3
     loss_weights:
       lambda_vq: 0.0
@@ -69,7 +69,7 @@ train:
   # Stage 1: Joint fine-tuning (with codebook)
   stage1:
     name: joint_fine_tuning
-    epochs: 60
+    epochs: 30
     lr: 5e-4  # Lower learning rate for fine-tuning
     
     # Option 1: Fixed loss weights

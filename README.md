@@ -25,49 +25,47 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 
 ## Usage
 
-### 1. Train BioBlobs without codebook 
+### Multi-stage Training
+
+Train BioBlobs with multi-stage training (BioBlobs + VQ Codebook):
 
 Train on Enzyme Commission dataset:
 ```bash
-python run_bioblobs.py \
-    data.dataset_name=ec \
-    data.split=random \
-    train.epochs=120 \
-    train.use_wandb=true
+python run_bioblobs_multistage.py \
+    data.dataset_name=ec \  
+    data.split=structure \  # data split 
+    multistage.stage0.epochs=120 \
+    multistage.stage1.epochs=30 \
 ```
 
-### 2. Resume Training with Codebook 
-
-Resume from bioblobs checkpoint with VQ codebook:
+Train on Gene Ontology dataset:
 ```bash
-python run_bioblobs_codebook_resume.py \
-    data.dataset_name=ec \
-    resume.bioblobs_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-bioblobs-*.ckpt \
-    multistage.stage0.epochs=50
+python run_bioblobs_multistage.py \
+    data.dataset_name=go \
 ```
 
 ## Output Structure
 
 Training outputs are organized as follows:
 ```
-outputs/YYYY-MM-DD/HH-MM-SS/
-├── results_summary.json          # Training metrics and test results
-├── best-bioblobs-*.ckpt          # Best checkpoint (bioblobs)  
-├── last.ckpt                     # Last checkpoint
-├── final_bioblobs_model.ckpt      # Final saved model
-├── interpretability/             # Analysis results
-│   ├── test_interpretability.json
-│   └── initial.json              # (resume training only)
-├── codebook_initialization/      # (resume training only)
-│   └── initialization_stats.json
-└── .hydra/                       # Hydra configuration logs
-    └── config.yaml
+outputs/bioblobs_multistage_test/{dataset}/{split}/YYYY-MM-DD-HH-MM-SS/
+├── final_summary.json                  # Overall training summary
+├── run_bioblobs_multistage.log         # Training logs
+├── stage0/                             # Stage 0: BioBlobs training
+│   ├── best-stage0-epoch=XX-val_*.ckpt # Best checkpoint (stage 0)
+│   ├── last.ckpt                       # Last checkpoint (stage 0)
+│   └── stage0_results.json             # Stage 0 results
+├── stage1/                             # Stage 1: VQ Codebook training
+│   ├── best-stage1-epoch=XX-val_*.ckpt # Best checkpoint (stage 1)
+│   ├── last.ckpt                       # Last checkpoint (stage 1)
+│   ├── stage1_results.json             # Stage 1 results
+│   └── interpretability/               # Interpretability analysis
+│       └── test_interpretability.json
+├── codebook_initialization/            # VQ Codebook initialization
+    └── initialization_stats.json
+
 ```
 
-## Key Files
 
-- `run_bioblobs.py`: Train BIOBLOS w/o codebook baseline
-- `run_bioblobs_codebook_resume.py`: Resume training with VQ codebook to get BIOBLOS results
-- `train_lightling.py`: Lightning modules for both methods
-- `bioblobs_model.py`: Core model architecture
-- `conf/`: Configuration files for different datasets/settings
+
+
