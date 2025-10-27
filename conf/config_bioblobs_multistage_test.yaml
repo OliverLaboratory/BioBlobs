@@ -4,23 +4,23 @@ hydra:
   output_subdir: null
 
 data: 
-  dataset_name: go
+  dataset_name: ec
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /home/wangx86/iclr2026/BioBlobs/data
-  test_mode: false  
+  test_mode: true  # Use small subset for testing
 
 model:
   node_in_dim: [6, 3]
   node_h_dim: [100, 16]
   edge_in_dim: [32, 1]
   edge_h_dim: [32, 1]
-  num_layers: 2
+  num_layers: 2  # Reduced for faster testing
   drop_rate: 0.1
   pooling: sum
   seq_in: false
   # Partitioner hyperparameters
-  max_clusters: 3
+  max_clusters: 3  # Reduced for faster testing
   nhid: 50
   k_hop: 1
   cluster_size_max: 15
@@ -29,37 +29,36 @@ model:
   tau_min: 0.1
   tau_decay: 0.95
   # Codebook hyperparameters
-  codebook_size: 512
-  codebook_dim: null  # If null, uses cluster feature dim
+  codebook_size: 128  # Reduced for faster testing
+  codebook_dim: null
   codebook_beta: 0.25
   codebook_decay: 0.99
   codebook_eps: 1e-5
   codebook_distance: l2
   codebook_cosine_normalize: false
-  # Loss weights (will be overridden by stage configs)
+  # Loss weights
   lambda_vq: 0.0
   lambda_ent: 0.0
   lambda_psc: 0.0
   psc_temp: 0.3
 
 train:
-  # Global hyperparameters (shared across all stages)
-  batch_size: 32
-  num_workers: 4
+  # Global hyperparameters
+  batch_size: 32  # Smaller batch for testing
+  num_workers: 2  # Reduced for testing
   seed: 42
   models_dir: ./saved_models
-  use_wandb: false
-  wandb_project: bioblobs_multistage_go
-  # Cosine learning rate schedule with warmup
+  use_wandb: true  # Disabled for quick testing
+  wandb_project: bioblobs_multistage_test
   use_cosine_schedule: true
-  warmup_epochs: 3
+  warmup_epochs: 1  # Reduced for testing
   # K-means initialization for codebook (before Stage 1)
-  kmeans_max_batches: 15  # Fewer batches for GO dataset
+  kmeans_max_batches: 5  # Very few batches for quick testing
   
   # Stage 0: Baseline training (bypass codebook)
   stage0:
     name: baseline
-    epochs: 30
+    epochs: 2  # Minimal epochs for testing
     lr: 1e-3
     loss_weights:
       lambda_vq: 0.0
@@ -69,34 +68,18 @@ train:
   # Stage 1: Joint fine-tuning (with codebook)
   stage1:
     name: joint_fine_tuning
-    epochs: 30
-    lr: 5e-4  # Lower learning rate for fine-tuning
-    
-    # Fixed loss weights
+    epochs: 2  # Minimal epochs for testing
+    lr: 5e-4
     loss_weights:
       lambda_vq: 1.0
       lambda_ent: 0.1
       lambda_psc: 0.5
-    
-    # Loss weight ramping (optional)
     loss_ramp:
       enabled: false
-      ramp_epochs: 15
-      initial_weights:
-        lambda_vq: 0.1
-        lambda_ent: 0.01
-        lambda_psc: 0.05
-      final_weights:
-        lambda_vq: 1.0
-        lambda_ent: 0.1
-        lambda_psc: 0.5
-    
-    # Freeze codebook in final epochs (optional)
     freeze_codebook_final:
       enabled: false
-      epochs: 5
 
 # Interpretability settings
 interpretability:
   enabled: true
-  max_batches: 20  # Limit for interpretability analysis
+  max_batches: 2  # Very limited for testing

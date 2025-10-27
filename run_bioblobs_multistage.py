@@ -20,9 +20,47 @@ import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
 from utils.train_w_codebook import MultiStageBioBlobsLightning
+from utils.train_w_codebook_multilabel import MultiStageBioBlobsMultiLabelLightning
 from hydra.utils import to_absolute_path
 from utils.interpretability import run_interpretability_analysis
 import json
+
+
+def initialize_codebook(model, train_loader, device, max_batches=50):
+    """Initialize codebook from training data using K-means clustering.
+    
+    Args:
+        model: MultiStageBioBlobsLightning model with codebook
+        train_loader: Training data loader
+        device: Device to run on
+        max_batches: Maximum number of batches to use for initialization
+        
+    Returns:
+        Dictionary with initialization statistics
+    """
+    print(f"Initializing codebook with K-means (max_batches={max_batches})")
+    
+    # Move model to device
+    model.to(device)
+    
+    # Call the model's codebook initialization method
+    model.model.kmeans_init_from_loader(
+        loader=train_loader,
+        max_batches=max_batches,
+        device=device
+    )
+    
+    # Return initialization stats
+    stats = {
+        "codebook_size": model.model.codebook.K,
+        "embedding_dim": model.model.codebook.D,
+        "initialization_method": "kmeans_from_clusters",
+        "max_batches_used": max_batches,
+    }
+    
+    print(f"✓ Codebook initialized: {stats['codebook_size']} codes, {stats['embedding_dim']} dims")
+    
+    return stats
 
 
 def create_wandb_logger(cfg):
@@ -39,14 +77,22 @@ def create_wandb_logger(cfg):
     )
 
 
-def create_checkpoint_callback(custom_output_dir, stage_idx):
+def create_checkpoint_callback(custom_output_dir, stage_idx, cfg):
     """Create checkpoint callback for a specific stage."""
+    # Use appropriate metric based on dataset type
+    if cfg.data.dataset_name == "go":
+        monitor_metric = "val_fmax"
+        filename_template = f"best-stage{stage_idx}-{{epoch:02d}}-{{val_fmax:.3f}}"
+    else:
+        monitor_metric = "val_acc"
+        filename_template = f"best-stage{stage_idx}-{{epoch:02d}}-{{val_acc:.3f}}"
+    
     return ModelCheckpoint(
-        monitor="val_acc",
+        monitor=monitor_metric,
         mode="max",
         save_top_k=1,
         dirpath=os.path.join(custom_output_dir, f"stage{stage_idx}"),
-        filename=f"best-stage{stage_idx}-{{epoch:02d}}-{{val_acc:.3f}}",
+        filename=filename_template,
         save_last=True,
     )
 
@@ -157,7 +203,12 @@ def train_and_evaluate_stage(
     
     # Print summary
     print(f"\n✓ Stage {stage_idx} results saved to: {stage_results_path}")
-    print(f"✓ Stage {stage_idx} test accuracy: {stage_results['test_metrics'].get('test_acc', 'N/A'):.4f}")
+    
+    # Print appropriate metric based on dataset type
+    if 'test_acc' in stage_results['test_metrics']:
+        print(f"✓ Stage {stage_idx} test accuracy: {stage_results['test_metrics'].get('test_acc', 'N/A'):.4f}")
+    elif 'test_fmax' in stage_results['test_metrics']:
+        print(f"✓ Stage {stage_idx} test F-max: {stage_results['test_metrics'].get('test_fmax', 'N/A'):.4f}")
     
     if stage_idx == 1:
         interpretability_summary = stage_results.get("interpretability", {})
@@ -168,7 +219,7 @@ def train_and_evaluate_stage(
     return stage_results
 
 
-def save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, wandb_logger=None):
+def save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, init_stats, wandb_logger=None):
     """Create and save final summary comparing both stages."""
     print("\n" + "=" * 70)
     print("FINAL SUMMARY - MULTI-STAGE TRAINING")
@@ -179,27 +230,51 @@ def save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, w
         "split": cfg.data.split,
         "total_epochs": cfg.train.stage0.epochs + cfg.train.stage1.epochs,
         "batch_size": cfg.train.batch_size,
+        "codebook_initialization": init_stats,
         "stage0": stage0_results,
         "stage1": stage1_results,
-        "comparison": {
-            "test_acc_improvement": (
-                stage1_results['test_metrics'].get('test_acc', 0) - 
-                stage0_results['test_metrics'].get('test_acc', 0)
-            ),
-            "test_loss_stage0": stage0_results['test_metrics'].get('test_loss', 'N/A'),
-            "test_loss_stage1": stage1_results['test_metrics'].get('test_loss', 'N/A'),
-        }
+        "comparison": {},
     }
+    
+    # Build comparison based on available metrics
+    stage0_metrics = stage0_results['test_metrics']
+    stage1_metrics = stage1_results['test_metrics']
+    
+    if 'test_acc' in stage0_metrics and 'test_acc' in stage1_metrics:
+        # Single-label classification
+        final_summary["comparison"] = {
+            "test_acc_improvement": stage1_metrics['test_acc'] - stage0_metrics['test_acc'],
+            "test_loss_stage0": stage0_metrics.get('test_loss', 'N/A'),
+            "test_loss_stage1": stage1_metrics.get('test_loss', 'N/A'),
+        }
+    elif 'test_fmax' in stage0_metrics and 'test_fmax' in stage1_metrics:
+        # Multi-label classification
+        final_summary["comparison"] = {
+            "test_fmax_improvement": stage1_metrics['test_fmax'] - stage0_metrics['test_fmax'],
+            "test_loss_stage0": stage0_metrics.get('test_loss', 'N/A'),
+            "test_loss_stage1": stage1_metrics.get('test_loss', 'N/A'),
+        }
     
     # Log final comparison to WandB
     if wandb_logger is not None:
-        wandb_logger.experiment.log({
-            "final/test_acc_improvement": final_summary['comparison']['test_acc_improvement'],
-            "final/stage0_test_acc": stage0_results['test_metrics'].get('test_acc', 0),
-            "final/stage1_test_acc": stage1_results['test_metrics'].get('test_acc', 0),
-            "final/stage0_test_loss": stage0_results['test_metrics'].get('test_loss', 0),
-            "final/stage1_test_loss": stage1_results['test_metrics'].get('test_loss', 0),
-        })
+        if 'test_acc_improvement' in final_summary['comparison']:
+            # Single-label metrics
+            wandb_logger.experiment.log({
+                "final/test_acc_improvement": final_summary['comparison']['test_acc_improvement'],
+                "final/stage0_test_acc": stage0_metrics['test_acc'],
+                "final/stage1_test_acc": stage1_metrics['test_acc'],
+                "final/stage0_test_loss": stage0_metrics.get('test_loss', 0),
+                "final/stage1_test_loss": stage1_metrics.get('test_loss', 0),
+            })
+        elif 'test_fmax_improvement' in final_summary['comparison']:
+            # Multi-label metrics
+            wandb_logger.experiment.log({
+                "final/test_fmax_improvement": final_summary['comparison']['test_fmax_improvement'],
+                "final/stage0_test_fmax": stage0_metrics['test_fmax'],
+                "final/stage1_test_fmax": stage1_metrics['test_fmax'],
+                "final/stage0_test_loss": stage0_metrics.get('test_loss', 0),
+                "final/stage1_test_loss": stage1_metrics.get('test_loss', 0),
+            })
     
     # Save final summary
     final_summary_path = os.path.join(custom_output_dir, "final_summary.json")
@@ -209,13 +284,25 @@ def save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, w
     # Print comparison
     print("\n📊 STAGE COMPARISON:")
     print("  Stage 0 (Baseline):")
-    print(f"    - Test Accuracy: {stage0_results['test_metrics'].get('test_acc', 'N/A'):.4f}")
-    print(f"    - Test Loss:     {stage0_results['test_metrics'].get('test_loss', 'N/A'):.4f}")
-    print("  Stage 1 (With Codebook):")
-    print(f"    - Test Accuracy: {stage1_results['test_metrics'].get('test_acc', 'N/A'):.4f}")
-    print(f"    - Test Loss:     {stage1_results['test_metrics'].get('test_loss', 'N/A'):.4f}")
-    print("  Improvement:")
-    print(f"    - Accuracy Δ:    {final_summary['comparison']['test_acc_improvement']:+.4f}")
+    
+    if 'test_acc' in stage0_metrics:
+        # Single-label classification
+        print(f"    - Test Accuracy: {stage0_metrics['test_acc']:.4f}")
+        print(f"    - Test Loss:     {stage0_metrics.get('test_loss', 'N/A'):.4f}")
+        print("  Stage 1 (With Codebook):")
+        print(f"    - Test Accuracy: {stage1_metrics['test_acc']:.4f}")
+        print(f"    - Test Loss:     {stage1_metrics.get('test_loss', 'N/A'):.4f}")
+        print("  Improvement:")
+        print(f"    - Accuracy Δ:    {final_summary['comparison']['test_acc_improvement']:+.4f}")
+    elif 'test_fmax' in stage0_metrics:
+        # Multi-label classification
+        print(f"    - Test F-max:    {stage0_metrics['test_fmax']:.4f}")
+        print(f"    - Test Loss:     {stage0_metrics.get('test_loss', 'N/A'):.4f}")
+        print("  Stage 1 (With Codebook):")
+        print(f"    - Test F-max:    {stage1_metrics['test_fmax']:.4f}")
+        print(f"    - Test Loss:     {stage1_metrics.get('test_loss', 'N/A'):.4f}")
+        print("  Improvement:")
+        print(f"    - F-max Δ:       {final_summary['comparison']['test_fmax_improvement']:+.4f}")
     
     return final_summary
 
@@ -255,9 +342,14 @@ def main(cfg: DictConfig):
         test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False
     )
 
-    # Create multi-stage model
+    # Create multi-stage model (choose based on dataset type)
     print("\nCreating Multi-Stage BioBlobs model...")
-    model = MultiStageBioBlobsLightning(cfg.model, cfg.train, num_classes)
+    if cfg.data.dataset_name == "go":
+        print("Using MultiStageBioBlobsMultiLabelLightning for multi-label GO classification")
+        model = MultiStageBioBlobsMultiLabelLightning(cfg.model, cfg.train, num_classes)
+    else:
+        print("Using MultiStageBioBlobsLightning for single-label classification")
+        model = MultiStageBioBlobsLightning(cfg.model, cfg.train, num_classes)
 
     print("\nModel Architecture:")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -281,7 +373,7 @@ def main(cfg: DictConfig):
     # STAGE 0: Baseline Training (Bypass Codebook)
     # ============================================================================
     
-    checkpoint_callback_stage0 = create_checkpoint_callback(custom_output_dir, stage_idx=0)
+    checkpoint_callback_stage0 = create_checkpoint_callback(custom_output_dir, stage_idx=0, cfg=cfg)
     trainer_stage0 = create_trainer(
         cfg, stage_idx=0, custom_output_dir=custom_output_dir, 
         wandb_logger=wandb_logger, checkpoint_callback=checkpoint_callback_stage0
@@ -294,10 +386,46 @@ def main(cfg: DictConfig):
     )
 
     # ============================================================================
+    # CODEBOOK INITIALIZATION (K-MEANS) - Before Stage 1
+    # ============================================================================
+    
+    print("\n" + "=" * 70)
+    print("CODEBOOK INITIALIZATION (K-MEANS)")
+    print("=" * 70)
+    print("Initializing VQ codebook from Stage 0 cluster features...")
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    init_stats = initialize_codebook(
+        model=model,
+        train_loader=train_loader,
+        device=device,
+        max_batches=cfg.train.get("kmeans_max_batches", 50),
+    )
+    
+    # Save initialization stats
+    init_dir = os.path.join(custom_output_dir, "codebook_initialization")
+    os.makedirs(init_dir, exist_ok=True)
+    init_stats_path = os.path.join(init_dir, "initialization_stats.json")
+    with open(init_stats_path, "w") as f:
+        json.dump(init_stats, f, indent=2)
+    
+    print(f"✓ Codebook initialized: {init_stats['codebook_size']} codes, {init_stats['embedding_dim']} dims")
+    print(f"✓ Initialization method: {init_stats['initialization_method']}")
+    print(f"✓ Stats saved to: {init_stats_path}")
+    
+    # Log initialization to WandB
+    if wandb_logger is not None:
+        wandb_logger.experiment.log({
+            "codebook/size": init_stats['codebook_size'],
+            "codebook/embedding_dim": init_stats['embedding_dim'],
+            "codebook/init_method": init_stats['initialization_method'],
+        })
+
+    # ============================================================================
     # STAGE 1: Joint Fine-Tuning (With Codebook)
     # ============================================================================
     
-    checkpoint_callback_stage1 = create_checkpoint_callback(custom_output_dir, stage_idx=1)
+    checkpoint_callback_stage1 = create_checkpoint_callback(custom_output_dir, stage_idx=1, cfg=cfg)
     trainer_stage1 = create_trainer(
         cfg, stage_idx=1, custom_output_dir=custom_output_dir,
         wandb_logger=wandb_logger, checkpoint_callback=checkpoint_callback_stage1
@@ -313,7 +441,7 @@ def main(cfg: DictConfig):
     # FINAL SUMMARY
     # ============================================================================
     
-    save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, wandb_logger)
+    save_final_summary(cfg, custom_output_dir, stage0_results, stage1_results, init_stats, wandb_logger)
     
     # Finish WandB run after both stages complete
     if wandb_logger is not None:

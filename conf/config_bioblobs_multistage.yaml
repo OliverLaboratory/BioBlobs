@@ -53,6 +53,8 @@ train:
   # Cosine learning rate schedule with warmup
   use_cosine_schedule: true
   warmup_epochs: 5
+  # K-means initialization for codebook (before Stage 1)
+  kmeans_max_batches: 50
   
   # Stage 0: Baseline training (bypass codebook)
   stage0:

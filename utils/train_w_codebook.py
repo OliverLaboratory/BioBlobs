@@ -93,6 +93,32 @@ class MultiStageBioBlobsLightning(pl.LightningModule):
             self.bypass_codebook = False
             self.model.unfreeze_all()
 
+            # This ensures modules are in train mode
+            self.train()
+            modules_set_to_train = 0
+            for name, module in self.named_modules():
+                if hasattr(module, "training") and not module.training:
+                    module.train()
+                    modules_set_to_train += 1
+            
+            if modules_set_to_train > 0:
+                print(f"✓ Forced {modules_set_to_train} modules from eval to training mode")
+            
+            # Final check for any modules still in eval mode
+            eval_modules = []
+            for name, module in self.named_modules():
+                if hasattr(module, "training") and not module.training:
+                    eval_modules.append(name)
+            
+            if eval_modules:
+                print(f"  ⚠️  Warning: {len(eval_modules)} modules still in eval mode:")
+                for mod in eval_modules[:3]:  # Show first 3
+                    print(f"     - {mod}")
+                if len(eval_modules) > 3:
+                    print(f"     ... and {len(eval_modules) - 3} more")
+            else:
+                print("✓ All modules confirmed in training mode")
+
             # Setup loss weight ramping
             if stage_cfg.get("loss_ramp", {}).get("enabled", False):
                 self.loss_weight_scheduler = LossWeightScheduler(
@@ -474,3 +500,5 @@ class MultiStageBioBlobsLightning(pl.LightningModule):
         """Get number of epochs for current stage."""
         stage_cfg = getattr(self.train_cfg, f"stage{self.current_stage}")
         return stage_cfg.epochs
+
+
