@@ -9,3 +9,4 @@ __pycache__
 /pdb
 /case_study
 /checkpoints
+.DS_Store
