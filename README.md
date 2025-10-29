@@ -1,8 +1,8 @@
 # BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning
 
 * Generate rich reisue-level and protein-level embeddings for proteins that capture protein structure modularity.
-* Compute importance scores for protein substructures
-* Visualize learned function-critical protein substructures
+* Compute importance scores for protein substructures (blobs)
+* Visualize learned function-critical blobs
 
 ![](https://raw.githubusercontent.com/OliverLaboratory/BioBlobs/refs/heads/main/blobs.png)
 
