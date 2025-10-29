@@ -40,6 +40,14 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 
 ## Usage
 
+## Inference
+
+To run the model on a dataset and get node embeddings and  blob assignments:
+
+```
+python inference.py
+```
+
 ### Multi-stage Training
 
 Train BioBlobs with multi-stage training (BioBlobs + VQ Codebook):
