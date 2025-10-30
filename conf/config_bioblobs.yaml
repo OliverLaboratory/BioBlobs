@@ -4,11 +4,11 @@ hydra:
   output_subdir: null
 
 data: 
-  dataset_name: enzymecommission
+  dataset_name: ec
   split: structure
   split_similarity_threshold: 0.7
-  data_dir: /home/wangx86/partoken/partoken-protein/data
-  test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  data_dir: /home/wangx86/iclr2026/BioBlobs/data
+  test_mode: false  
 
 model:
   node_in_dim: [6, 3]
@@ -46,7 +46,7 @@ train:
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
-  wandb_project: partgvp
+  wandb_project: bioblobs_wo_codebook
   # Cosine learning rate schedule with warmup
   use_cosine_schedule: false
   warmup_epochs: 5

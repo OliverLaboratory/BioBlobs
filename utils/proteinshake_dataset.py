@@ -18,16 +18,16 @@ def _get_label_key(pinfo, dataset_name):
     
     Args:
         pinfo: Protein information dictionary
-        dataset_name: Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
+        dataset_name: Name of the dataset ('ec', 'proteinfamily', 'scop-fa')
     
     Returns:
         str: The label key for the protein
     """
-    if dataset_name == "enzymecommission":
+    if dataset_name == "ec":
         return pinfo["EC"].split(".")[0]
-    elif dataset_name == "geneontology":
+    elif dataset_name == "go":
         return pinfo["molecular_function"]
-    elif dataset_name == "scope":
+    elif dataset_name == "scop-fa":
         return pinfo["SCOP-FA"]
     else:
         raise ValueError(f"Unknown dataset_name: {dataset_name}")
@@ -276,8 +276,7 @@ class ProteinClassificationDataset(data.Dataset):
         return vec
 
 
-
-def generator_to_structures(generator, dataset_name="enzymecommission", token_map=None, original_indices=None):
+def generator_to_structures(generator, dataset_name="ec", token_map=None, original_indices=None):
     """
     Convert generator of proteins to list of structures with name, sequence, and coordinates.
     Missing backbone atoms get infinite coordinates and will be filtered by ProteinGraphDataset.
@@ -295,7 +294,7 @@ def generator_to_structures(generator, dataset_name="enzymecommission", token_ma
     structures = []
     labels_set = set()
     temp_data = []
-    filtered_indices = []  # Track which original indices made it through filtering
+    filtered_indices = []  
 
     # Stats
     filtering_stats = {
@@ -456,7 +455,7 @@ def get_dataset(
     and avoid issues with filtering during conversion.
 
     Args:
-        dataset_name (str): Name of the dataset ('enzymecommission', 'proteinfamily', 'scope')
+        dataset_name (str): Name of the dataset ('ec', 'proteinfamily', 'scop-fa')
         split (str): Split method ('random', 'sequence', 'structure')
         split_similarity_threshold (float): Similarity threshold for splitting
         data_dir (str): Directory to store/load data files
@@ -466,7 +465,7 @@ def get_dataset(
         tuple: (train_dataset, val_dataset, test_dataset, num_classes)
     """
     # Load the appropriate task
-    if dataset_name == "enzymecommission":
+    if dataset_name == "ec":
         from proteinshake.tasks import EnzymeClassTask
 
         task = EnzymeClassTask(
@@ -480,6 +479,7 @@ def get_dataset(
             task.val_index,
             task.test_index,
         )
+        token_map = task.token_map
 
     elif dataset_name == "proteinfamily":
         from proteinshake.tasks import ProteinFamilyTask
@@ -494,8 +494,9 @@ def get_dataset(
             task.val_index,
             task.test_index,
         )
+        token_map = task.token_map
 
-    elif dataset_name == "scope":
+    elif dataset_name == "scop-fa":
         from proteinshake.tasks import StructuralClassTask
 
         task = StructuralClassTask(
@@ -508,10 +509,11 @@ def get_dataset(
             task.val_index,
             task.test_index,
         )
+        token_map = task.token_map
 
-    elif dataset_name == "geneontology":
+    elif dataset_name == "go":
         # Import and use the gene ontology dataset function
-        from utils.gene_ontology import get_gene_ontology_dataset
+        from utils.go_dataset import get_gene_ontology_dataset
         return get_gene_ontology_dataset(
             split=split, 
             split_similarity_threshold=split_similarity_threshold, 
@@ -573,14 +575,14 @@ def get_dataset(
                 if idx < len(protein_list):
                     yield protein_list[idx]
         
-        # Build token_map from all proteins to ensure all labels are included
-        print("\nBuilding token map from all proteins...")
-        labels_set = set()
-        for protein_data in tqdm(all_proteins, desc="Collecting all labels"):
-            labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
-        sorted_labels = sorted(labels_set)
-        token_map = {label: i for i, label in enumerate(sorted_labels)}
-        print(f"Token map created with {len(token_map)} classes: {token_map}")
+        # # Build token_map from all proteins to ensure all labels are included
+        # print("\nBuilding token map from all proteins...")
+        # labels_set = set()
+        # for protein_data in tqdm(all_proteins, desc="Collecting all labels"):
+        #     labels_set.add(_get_label_key(protein_data["protein"], dataset_name))
+        # sorted_labels = sorted(labels_set)
+        # token_map = {label: i for i, label in enumerate(sorted_labels)}
+        # print(f"Token map created with {len(token_map)} classes: {token_map}")
                 
         # Now convert each split using the same token mapping
         print("\nConverting training split...")

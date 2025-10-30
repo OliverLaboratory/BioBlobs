@@ -15,10 +15,10 @@ from utils.interpretability import (
     dataset_inter_results,
 )
 from train_lightling import (
-    create_partoken_resume_model_from_checkpoint,
+    create_bioblobs_resume_model_from_checkpoint,
     initialize_codebook_from_dataloader,
 )
-from partoken_resume_lightning import ParTokenResumeTrainingLightning
+from bioblob_resume_lightning import BioBlobsTrainingCodebookModule
 import json
 
 
@@ -90,21 +90,21 @@ def test_checkpoint(
     return result, model
 
 
-def compare_with_partgvp_baseline(
-    partgvp_checkpoint_path, partoken_results, output_dir
+def compare_with_bioblobs_baseline(
+    bioblobs_checkpoint_path, bioblobs_results, output_dir
 ):
-    """Compare ParToken results with original PartGVP baseline."""
+    """Compare BioBlobs with codebook results with original BioBlobs baseline."""
     comparison = {
-        "partgvp_checkpoint": str(partgvp_checkpoint_path),
-        "partoken_results": partoken_results,
+        "bioblobs_checkpoint": str(bioblobs_checkpoint_path),
+        "bioblobs_results": bioblobs_results,
         "comparison_summary": {
-            "methodology": "Resumed training from PartGVP checkpoint with codebook",
+            "methodology": "Resumed training from BioBlobs checkpoint with codebook",
             "stages": ["codebook_initialization", "joint_finetuning"],
         },
-    }
+    }   
 
     # Save comparison
-    comparison_path = os.path.join(output_dir, "partgvp_partoken_comparison.json")
+    comparison_path = os.path.join(output_dir, "bioblobs_codebook_comparison.json")
     with open(comparison_path, "w") as f:
         json.dump(comparison, f, indent=2)
 
@@ -113,24 +113,24 @@ def compare_with_partgvp_baseline(
 
 
 @hydra.main(
-    version_base="1.1", config_path="conf", config_name="config_partoken_resume"
+    version_base="1.1", config_path="conf", config_name="config_bioblobs_resume"
 )
 def main(cfg: DictConfig):
-    print("🧬 ParToken Resume Training (PartGVP → ParToken + Codebook)")
+    print("RUNNING BioBlobs RESUME TRAINING WITH VQ CODEBOOK")
     print("=" * 70)
 
     # Validate required checkpoint path
-    if cfg.resume.partgvp_checkpoint_path is None:
+    if cfg.resume.model_checkpoint_path is None:
         raise ValueError(
-            "Must provide partgvp_checkpoint_path via command line: resume.partgvp_checkpoint_path=path/to/checkpoint.ckpt"
+            "Must provide model_checkpoint_path via command line: resume.model_checkpoint_path=path/to/checkpoint.ckpt"
         )
 
-    if not os.path.exists(cfg.resume.partgvp_checkpoint_path):
+    if not os.path.exists(cfg.resume.model_checkpoint_path):
         raise FileNotFoundError(
-            f"PartGVP checkpoint not found: {cfg.resume.partgvp_checkpoint_path}"
+            f"BioBlobs model checkpoint not found: {cfg.resume.model_checkpoint_path}"
         )
 
-    print(f"📁 PartGVP checkpoint: {cfg.resume.partgvp_checkpoint_path}")
+    print(f"📁 BioBlobs model checkpoint: {cfg.resume.model_checkpoint_path}")
     print(OmegaConf.to_yaml(cfg))
 
     set_seed(cfg.train.seed)
@@ -161,20 +161,20 @@ def main(cfg: DictConfig):
         test_dataset, cfg.train.batch_size, cfg.train.num_workers, shuffle=False
     )
 
-    # Create ParToken model from PartGVP checkpoint - choose appropriate version based on dataset
-    print("\n🔄 RESUMING TRAINING FROM PARTGVP CHECKPOINT")
+    # Create BioBlobs model from BioBlobs checkpoint - choose appropriate version based on dataset
+    print("\n🔄 RESUMING TRAINING FROM BIOBLOBS CHECKPOINT")
     print("=" * 70)
 
-    if cfg.data.dataset_name == "geneontology":
+    if cfg.data.dataset_name == "go":
         print(
-            "🧬 Using multi-label ParToken resume model for Gene Ontology classification"
+            "🧬 Using multi-label BioBlobs resume model for Gene Ontology classification"
         )
         from train_lightling import (
-            create_partoken_resume_multilabel_model_from_checkpoint,
+            create_bioblobs_resume_multilabel_model_from_checkpoint,
         )
 
-        model = create_partoken_resume_multilabel_model_from_checkpoint(
-            partgvp_checkpoint_path=cfg.resume.partgvp_checkpoint_path,
+        model = create_bioblobs_resume_multilabel_model_from_checkpoint(
+            model_checkpoint_path=cfg.resume.model_checkpoint_path,
             model_cfg=cfg.model,
             train_cfg=cfg.train,
             multistage_cfg=cfg.multistage,
@@ -183,11 +183,11 @@ def main(cfg: DictConfig):
                 "load_model_config_from_checkpoint", True
             ),
         )
-        model_type = "ParToken Resume Multi-Label"
+        model_type = "BioBlobs Resume Multi-Label"
     else:
-        print("🧬 Using single-label ParToken resume model")
-        model = create_partoken_resume_model_from_checkpoint(
-            partgvp_checkpoint_path=cfg.resume.partgvp_checkpoint_path,
+        print("🧬 Using single-label BioBlobs resume model")
+        model = create_bioblobs_resume_model_from_checkpoint(
+            model_checkpoint_path=cfg.resume.model_checkpoint_path,
             model_cfg=cfg.model,
             train_cfg=cfg.train,
             multistage_cfg=cfg.multistage,
@@ -196,7 +196,7 @@ def main(cfg: DictConfig):
                 "load_model_config_from_checkpoint", True
             ),
         )
-        model_type = "ParToken Resume"
+        model_type = "BioBlobs Resume"
 
     print("\n🏗️  Model Architecture:")
     print(f"  • Total parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -264,7 +264,7 @@ def main(cfg: DictConfig):
     print("=" * 70)
 
     init_stats = initialize_codebook_from_dataloader(
-        partoken_model=model,
+        model=model,
         train_loader=train_loader,
         device=device,
         max_batches=cfg.resume.kmeans_max_batches,
@@ -283,15 +283,15 @@ def main(cfg: DictConfig):
         wandb_logger = WandbLogger(
             project=cfg.train.wandb_project,
             name=f"resume_{cfg.data.dataset_name}_{cfg.data.split}_{timestamp}",
-            tags=["partoken-resume", cfg.data.dataset_name, cfg.data.split],
+            tags=["bioblobs-resume", cfg.data.dataset_name, cfg.data.split],
         )
 
     # Checkpoint callback - use appropriate metric based on dataset type
-    if cfg.data.dataset_name == "geneontology":
-        filename_template = "best-partoken-{epoch:02d}-{val_fmax:.3f}"
+    if cfg.data.dataset_name == "go":
+        filename_template = "best-bioblobs-{epoch:02d}-{val_fmax:.3f}"
         monitor_metric = "val_fmax"
     else:
-        filename_template = "best-partoken-{epoch:02d}-{val_acc:.3f}"
+        filename_template = "best-bioblobs-{epoch:02d}-{val_acc:.3f}"
         monitor_metric = "val_acc"
 
     checkpoint_callback = ModelCheckpoint(
@@ -339,7 +339,7 @@ def main(cfg: DictConfig):
                 p.numel() for p in model.parameters() if p.requires_grad
             ),
             "mode": model_type,
-            "source_checkpoint": str(cfg.resume.partgvp_checkpoint_path),
+            "source_checkpoint": str(cfg.resume.model_checkpoint_path),
         },
         "initialization_stats": init_stats,
         "initial_interpretability": {
@@ -351,12 +351,12 @@ def main(cfg: DictConfig):
     }
 
     # Test best checkpoint - use the correct model class based on dataset
-    if cfg.data.dataset_name == "geneontology":
-        from partoken_resume_lightning import ParTokenResumeTrainingMultiLabelLightning
+    if cfg.data.dataset_name == "go":
+        from bioblob_resume_lightning import BioBlobsTrainingCodebookMultiLabelModule
 
-        test_model_class = ParTokenResumeTrainingMultiLabelLightning
+        test_model_class = BioBlobsTrainingCodebookMultiLabelModule
     else:
-        test_model_class = ParTokenResumeTrainingLightning
+        test_model_class = BioBlobsTrainingCodebookModule
 
     if best_checkpoint_path and os.path.exists(best_checkpoint_path):
         best_results, best_model = test_checkpoint(
@@ -421,7 +421,7 @@ def main(cfg: DictConfig):
 
         if interp_results is not None:
             # Save results
-            results_path = os.path.join(interp_output_dir, "partoken_final.json")
+            results_path = os.path.join(interp_output_dir, "bioblobs_final.json")
             save_interpretability_results(interp_results, results_path)
             print_interpretability_summary(interp_results)
 
@@ -441,11 +441,11 @@ def main(cfg: DictConfig):
                 "error": "Analysis returned None",
             }
 
-    # Compare with PartGVP baseline
-    if cfg.evaluation.compare_with_baseline:
-        comparison = compare_with_partgvp_baseline(
-            cfg.resume.partgvp_checkpoint_path, results_summary, custom_output_dir
-        )
+    # # Compare with BioBlobs baseline
+    # if cfg.evaluation.compare_with_baseline:
+    #     comparison = compare_with_bioblobs_baseline(
+    #         cfg.resume.model_checkpoint_path, results_summary, custom_output_dir
+    #     )
 
     # Update results summary
     with open(results_summary_path, "w") as f:
@@ -455,7 +455,7 @@ def main(cfg: DictConfig):
     if wandb_logger is not None:
         wandb.finish()
 
-    print("\n🎉 PARTOKEN RESUME TRAINING COMPLETED!")
+    print("\n🎉 BIOBLOBS RESUME TRAINING COMPLETED!")
     print("=" * 70)
     print(f"📊 Results summary: {results_summary_path}")
     print(f"🔍 Initial interpretability: {initial_interp_path}")

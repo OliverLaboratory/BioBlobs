@@ -1,11 +1,23 @@
-# BioBlobs
+[![arXiv](https://img.shields.io/badge/arXiv-2510.01632-b31b1b.svg)](https://arxiv.org/abs/2510.01632)
 
-Differentiable  Graph Partitioning for Protein Representation Learning
+# BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning
 
-## Methods
+* Generate rich reisue-level and protein-level embeddings for proteins that capture protein structure modularity.
+* Compute importance scores for protein substructures (blobs)
+* Visualize learned function-critical blobs
 
-- **PartGVP**: BioBlobs without codebook (baseline geometric model)  
-- **BioBlobs**: Resume training with VQ codebook for hierarchical representations
+![](https://raw.githubusercontent.com/OliverLaboratory/BioBlobs/refs/heads/main/blobs.png)
+
+## Cite
+
+```
+@article{wang2025bioblobs,
+  title={BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning},
+  author={Wang, Xin and Oliver, Carlos},
+  journal={arXiv preprint arXiv:2510.01632},
+  year={2025}
+}
+```
 
 ## Installation
 
@@ -30,49 +42,55 @@ pip install pytorch-lightning scikit-learn hydra-core omegaconf wandb tqdm numpy
 
 ## Usage
 
-### 1. Train PartGVP (baseline)
+## Inference
+
+To run the model on a dataset and get node embeddings and  blob assignments:
+
+```
+python inference.py
+```
+
+### Multi-stage Training
+
+Train BioBlobs with multi-stage training (BioBlobs + VQ Codebook):
 
 Train on Enzyme Commission dataset:
 ```bash
-python run_partgvp.py \
-    data.dataset_name=enzymecommission \
-    data.split=random \
-    train.epochs=120 \
-    train.use_wandb=true
+python run_bioblobs_multistage.py \
+    data.dataset_name=ec \  
+    data.split=structure \  # data split 
+    multistage.stage0.epochs=120 \
+    multistage.stage1.epochs=30 \
 ```
 
-### 2. Resume Training with Codebook (BioBlobs)
-
-Resume from PartGVP checkpoint with VQ codebook:
+Train on Gene Ontology dataset:
 ```bash
-python run_partoken_resume.py \
-    data.dataset_name=enzymecommission \
-    resume.partgvp_checkpoint_path=outputs/YYYY-MM-DD/HH-MM-SS/best-partgvp-*.ckpt \
-    multistage.stage0.epochs=50
+python run_bioblobs_multistage.py \
+    data.dataset_name=go \
 ```
 
 ## Output Structure
 
 Training outputs are organized as follows:
 ```
-outputs/YYYY-MM-DD/HH-MM-SS/
-├── results_summary.json          # Training metrics and test results
-├── best-partgvp-*.ckpt          # Best checkpoint (PartGVP)  
-├── last.ckpt                     # Last checkpoint
-├── final_partgvp_model.ckpt      # Final saved model
-├── interpretability/             # Analysis results
-│   ├── test_interpretability.json
-│   └── initial.json              # (resume training only)
-├── codebook_initialization/      # (resume training only)
-│   └── initialization_stats.json
-└── .hydra/                       # Hydra configuration logs
-    └── config.yaml
+outputs/bioblobs_multistage_test/{dataset}/{split}/YYYY-MM-DD-HH-MM-SS/
+├── final_summary.json                  # Overall training summary
+├── run_bioblobs_multistage.log         # Training logs
+├── stage0/                             # Stage 0: BioBlobs training
+│   ├── best-stage0-epoch=XX-val_*.ckpt # Best checkpoint (stage 0)
+│   ├── last.ckpt                       # Last checkpoint (stage 0)
+│   └── stage0_results.json             # Stage 0 results
+├── stage1/                             # Stage 1: VQ Codebook training
+│   ├── best-stage1-epoch=XX-val_*.ckpt # Best checkpoint (stage 1)
+│   ├── last.ckpt                       # Last checkpoint (stage 1)
+│   ├── stage1_results.json             # Stage 1 results
+│   └── interpretability/               # Interpretability analysis
+│       └── test_interpretability.json
+├── codebook_initialization/            # VQ Codebook initialization
+    └── initialization_stats.json
+
 ```
 
-## Key Files
 
-- `run_partgvp.py`: Train BIOBLOS w/o codebook baseline
-- `run_partoken_resume.py`: Resume training with VQ codebook to get BIOBLOS results
-- `train_lightling.py`: Lightning modules for both methods
-- `partoken_model.py`: Core model architecture
-- `conf/`: Configuration files for different datasets/settings
+
+

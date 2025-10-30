@@ -1,10 +1,7 @@
-# pnc_partition.py
-# Seed-conditioned, trainable expansion with threshold-based selection
-# Includes a gradient-flow test.
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import traceback
 from torch_scatter import scatter_add, scatter_max
 from typing import Optional, Tuple
 
@@ -25,14 +22,13 @@ class ThresholdHead(nn.Module):
     Input shape: [Bv, D_in]  (concat of seed_ST, global_ctx, phi_local)
     Output: theta in R, broadcastable to candidate dim
     """
+
     def __init__(self, in_dim: int, hidden: int = 128):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(in_dim, hidden),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden, 1)
+            nn.Linear(in_dim, hidden), nn.ReLU(inplace=True), nn.Linear(hidden, 1)
         )
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mlp(x).squeeze(-1)  # [Bv]
 
@@ -43,7 +39,14 @@ class SeedCondExpansion(nn.Module):
     Uses straight-through probabilities instead of categorical size prediction.
     """
 
-    def __init__(self, score_dim: int, theta_in_dim: int, cluster_size_max: int, alpha: float = 0.2, tau_init: float = 1.0):
+    def __init__(
+        self,
+        score_dim: int,
+        theta_in_dim: int,
+        cluster_size_max: int,
+        alpha: float = 0.2,
+        tau_init: float = 1.0,
+    ):
         """
         Args:
             score_dim: node feature size for scoring
@@ -61,7 +64,9 @@ class SeedCondExpansion(nn.Module):
         self.threshold_head = ThresholdHead(theta_in_dim)
 
     @staticmethod
-    def _edges_to_cluster(adj: torch.Tensor, cluster_mask: torch.Tensor) -> torch.Tensor:
+    def _edges_to_cluster(
+        adj: torch.Tensor, cluster_mask: torch.Tensor
+    ) -> torch.Tensor:
         """
         Count edges from each node to the current cluster.
         Supports dense [B, N, N] and sparse COO with batch dimension.
@@ -84,14 +89,14 @@ class SeedCondExpansion(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,                     # [B, N, F] node features
-        adj: Optional[torch.Tensor],         # [B, N, N] or None
-        seed_ctx_feats: torch.Tensor,        # [B, D_seed] seed + context features
-        local_stats: torch.Tensor,           # [B, D_phi] local statistics
-        cluster_mask: torch.Tensor,          # [B, N] current cluster members
-        cand_mask: torch.Tensor,             # [B, N] k-hop candidates
+        x: torch.Tensor,  # [B, N, F] node features
+        adj: Optional[torch.Tensor],  # [B, N, N] or None
+        seed_ctx_feats: torch.Tensor,  # [B, D_seed] seed + context features
+        local_stats: torch.Tensor,  # [B, D_phi] local statistics
+        cluster_mask: torch.Tensor,  # [B, N] current cluster members
+        cand_mask: torch.Tensor,  # [B, N] k-hop candidates
         seed_repr: Optional[torch.Tensor] = None,  # [B, F] optional ST seed features
-        z_frac: Optional[torch.Tensor] = None      # [B, N]  <-- NEW
+        z_frac: Optional[torch.Tensor] = None,  # [B, N]  <-- NEW
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """
         Returns:
@@ -110,16 +115,16 @@ class SeedCondExpansion(nn.Module):
             q = self.Wq(x[torch.arange(B), seed_indices])  # [B, d] (hard)
         else:
             q = self.Wq(seed_repr)  # [B, d] (ST-soft)
-        
+
         scores = (x_k @ q.unsqueeze(-1)).squeeze(-1) / (x_k.size(-1) ** 0.5)  # [B, N]
 
         # 2) Add normalized local link term to prefer tight substructures
         if z_frac is None:
-            e2c = self._edges_to_cluster(adj, cluster_mask)    # [B, N]
-            deg = self._degree(adj).clamp_min(1.0)             # [B, N]
+            e2c = self._edges_to_cluster(adj, cluster_mask)  # [B, N]
+            deg = self._degree(adj).clamp_min(1.0)  # [B, N]
             z = e2c / deg
         else:
-            z = z_frac                                         # [B, N] (fast path)
+            z = z_frac  # [B, N] (fast path)
         cand_scores = scores + self.alpha * z
 
         # 3) Build the threshold input (concat seed+context with local stats)
@@ -172,7 +177,7 @@ class Partitioner(nn.Module):
         termination_threshold: float = 0.95,
         exp_hid: int = 64,
         exp_alpha: float = 0.2,
-        lambda_card: float = 0.005
+        lambda_card: float = 0.005,
     ):
         super().__init__()
         self.max_clusters = max_clusters
@@ -187,7 +192,7 @@ class Partitioner(nn.Module):
             nn.Linear(nfeat + nhid, nhid),
             nn.ReLU(inplace=True),
             nn.Dropout(0.1),
-            nn.Linear(nhid, 1)
+            nn.Linear(nhid, 1),
         )
 
         # Global context encoder (mean-pooled nodes)
@@ -195,25 +200,27 @@ class Partitioner(nn.Module):
 
         # Local size features dimension
         self.size_extra_dim = 3  # n_cand_log, seed_link_frac, cand_density
-        
+
         # Trainable expansion module with threshold head
-        theta_in_dim = nfeat + nhid + self.size_extra_dim  # seed_ST + global_ctx + phi_local
+        theta_in_dim = (
+            nfeat + nhid + self.size_extra_dim
+        )  # seed_ST + global_ctx + phi_local
         self.expander = SeedCondExpansion(
-            score_dim=nfeat, 
+            score_dim=nfeat,
             theta_in_dim=theta_in_dim,
             cluster_size_max=cluster_size_max,
-            alpha=exp_alpha, 
-            tau_init=1.0
+            alpha=exp_alpha,
+            tau_init=1.0,
         )
 
         # Temperature schedule
-        self.register_buffer('epoch', torch.tensor(0))
+        self.register_buffer("epoch", torch.tensor(0))
         self.tau_init = 1.0
         self.tau_min = 0.1
         self.tau_decay = 0.95
 
     def get_temperature(self) -> float:
-        return max(self.tau_min, self.tau_init * (self.tau_decay ** self.epoch))
+        return max(self.tau_min, self.tau_init * (self.tau_decay**self.epoch))
 
     def cardinality_prior(self, phi_local: torch.Tensor) -> torch.Tensor:
         """
@@ -229,9 +236,9 @@ class Partitioner(nn.Module):
 
     def _local_size_features(
         self,
-        adj: torch.Tensor,          # [B, N, N], dense or sparse
-        cand_mask: torch.Tensor,    # [B, N] bool
-        seed_idx: torch.Tensor      # [B] long
+        adj: torch.Tensor,  # [B, N, N], dense or sparse
+        cand_mask: torch.Tensor,  # [B, N] bool
+        seed_idx: torch.Tensor,  # [B] long
     ) -> torch.Tensor:
         """
         Compute small local stats to guide size prediction.
@@ -246,30 +253,27 @@ class Partitioner(nn.Module):
         cand_f = cand_mask.float()
 
         # number of candidates (log-scaled)
-        n_cand = cand_mask.sum(dim=1).float()           # [B]
-        n_cand_log = (n_cand + 1.0).log()               # [B]
+        n_cand = cand_mask.sum(dim=1).float()  # [B]
+        n_cand_log = (n_cand + 1.0).log()  # [B]
 
         # fraction of seed's edges that go into the candidate set
-        seed_rows = adj_dense[torch.arange(B), seed_idx]             # [B, N]
-        deg_seed_cand = (seed_rows * cand_f).sum(dim=1)              # [B]
+        seed_rows = adj_dense[torch.arange(B), seed_idx]  # [B, N]
+        deg_seed_cand = (seed_rows * cand_f).sum(dim=1)  # [B]
         deg_seed = adj_dense.sum(dim=-1)[torch.arange(B), seed_idx].clamp_min(1.0)
-        seed_link_frac = deg_seed_cand / deg_seed                    # [B]
+        seed_link_frac = deg_seed_cand / deg_seed  # [B]
 
         # density of the candidate-induced subgraph
-        cand_adj = adj_dense * cand_f.unsqueeze(1) * cand_f.unsqueeze(2)   # [B, N, N]
-        diag_sum = torch.diagonal(cand_adj, dim1=1, dim2=2).sum(dim=1)     # [B]
-        e_cand = (cand_adj.sum(dim=(1, 2)) - diag_sum) * 0.5               # [B]
-        denom = n_cand * (n_cand - 1.0) * 0.5                              # [B]
-        cand_density = e_cand / denom.clamp_min(1.0)                       # [B]
+        cand_adj = adj_dense * cand_f.unsqueeze(1) * cand_f.unsqueeze(2)  # [B, N, N]
+        diag_sum = torch.diagonal(cand_adj, dim1=1, dim2=2).sum(dim=1)  # [B]
+        e_cand = (cand_adj.sum(dim=(1, 2)) - diag_sum) * 0.5  # [B]
+        denom = n_cand * (n_cand - 1.0) * 0.5  # [B]
+        cand_density = e_cand / denom.clamp_min(1.0)  # [B]
 
         phi = torch.stack([n_cand_log, seed_link_frac, cand_density], dim=-1)  # [B, 3]
         return phi
 
     def _compute_k_hop_neighbors(
-        self,
-        adj: torch.Tensor,
-        seed_indices: torch.Tensor,
-        mask: torch.Tensor
+        self, adj: torch.Tensor, seed_indices: torch.Tensor, mask: torch.Tensor
     ) -> torch.Tensor:
         """
         Compute k-hop neighborhoods for each seed as a boolean mask.
@@ -296,10 +300,7 @@ class Partitioner(nn.Module):
         return reachable_mask
 
     def _gumbel_softmax_selection(
-        self,
-        logits: torch.Tensor,
-        tau: float,
-        mask: Optional[torch.Tensor] = None
+        self, logits: torch.Tensor, tau: float, mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Hard Gumbel-Softmax over nodes. Returns ST one-hots [B, N].
@@ -318,16 +319,13 @@ class Partitioner(nn.Module):
         return hard + (soft - soft.detach())
 
     def _check_termination(
-        self,
-        assignment_matrix: torch.Tensor,
-        mask: torch.Tensor,
-        cluster_idx: int
+        self, assignment_matrix: torch.Tensor, mask: torch.Tensor, cluster_idx: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Stop for graphs that reached coverage. Returns (should_terminate, active).
         """
         total_nodes = mask.sum(dim=-1).float()
-        assigned_nodes = assignment_matrix[:, :, :cluster_idx + 1].sum(dim=(1, 2))
+        assigned_nodes = assignment_matrix[:, :, : cluster_idx + 1].sum(dim=(1, 2))
         coverage = assigned_nodes / (total_nodes + 1e-8)
 
         should_terminate = coverage >= self.termination_threshold
@@ -337,12 +335,14 @@ class Partitioner(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,                       # [B, N, D]
-        adj: Optional[torch.Tensor],           # [B, N, N] or None
-        mask: torch.Tensor,                    # [B, N] bool
+        x: torch.Tensor,  # [B, N, D]
+        adj: Optional[torch.Tensor],  # [B, N, N] or None
+        mask: torch.Tensor,  # [B, N] bool
         edge_index: Optional[torch.Tensor] = None,  # [2, E] flat over batch (PyG)
-        batch_vec: Optional[torch.Tensor] = None,   # [N_total] graph id per node
-        dense_index: Optional[torch.Tensor] = None  # [B, N] global node ids at padded slots
+        batch_vec: Optional[torch.Tensor] = None,  # [N_total] graph id per node
+        dense_index: Optional[
+            torch.Tensor
+        ] = None,  # [B, N] global node ids at padded slots
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Run partitioning and return cluster features and assignments.
@@ -362,13 +362,18 @@ class Partitioner(nn.Module):
             N_total = int(batch_vec.size(0))
             deg_total_flat = scatter_add(
                 torch.ones(E, device=device, dtype=torch.float32),
-                edge_index[0], dim=0, dim_size=N_total
+                edge_index[0],
+                dim=0,
+                dim_size=N_total,
             )  # [N_total]
 
         # Initial availability and context
         available_mask = mask.clone()
         # mean over valid nodes (simple; can swap with masked mean if needed)
-        node_mean = x.masked_fill(~mask.unsqueeze(-1), 0).sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp_min(1).float()
+        node_mean = (
+            x.masked_fill(~mask.unsqueeze(-1), 0).sum(dim=1)
+            / mask.sum(dim=1, keepdim=True).clamp_min(1).float()
+        )
         global_context = self.context_encoder(node_mean)
 
         cluster_embeddings = []
@@ -391,11 +396,15 @@ class Partitioner(nn.Module):
 
             # --- Seed selection ---
             context_expanded = global_context.unsqueeze(1).expand(-1, N, -1)
-            combined_features = torch.cat([x, context_expanded], dim=-1)  # [B, N, D+nhid]
+            combined_features = torch.cat(
+                [x, context_expanded], dim=-1
+            )  # [B, N, D+nhid]
             seed_logits = self.seed_selector(combined_features).squeeze(-1)  # [B, N]
 
             selection_mask = available_mask & active.unsqueeze(-1)
-            w_seed = self._gumbel_softmax_selection(seed_logits, tau, selection_mask)  # [B, N] ST
+            w_seed = self._gumbel_softmax_selection(
+                seed_logits, tau, selection_mask
+            )  # [B, N] ST
             seed_indices = w_seed.argmax(dim=-1)  # [B] for hard bookkeeping
 
             # ST seed embedding (gives gradient to seed head)
@@ -405,7 +414,9 @@ class Partitioner(nn.Module):
             has_selection = selection_mask.sum(dim=-1) > 0
             valid_seeds = has_selection & active
             if valid_seeds.any():
-                assignment_matrix[valid_seeds, seed_indices[valid_seeds], cluster_idx] = 1.0
+                assignment_matrix[
+                    valid_seeds, seed_indices[valid_seeds], cluster_idx
+                ] = 1.0
                 for b in range(B):
                     if valid_seeds[b]:
                         available_mask[b, seed_indices[b]] = False
@@ -413,37 +424,73 @@ class Partitioner(nn.Module):
                 # --- Expansion with threshold-based scorer ---
                 if self.cluster_size_max > 1:
                     # Use fast path if sparse graph info is available
-                    if edge_index is not None and batch_vec is not None and dense_index is not None:
-                        k_hop_mask = self._compute_k_hop_neighbors_fast(edge_index, batch_vec, dense_index, seed_indices, mask)
+                    if (
+                        edge_index is not None
+                        and batch_vec is not None
+                        and dense_index is not None
+                    ):
+                        k_hop_mask = self._compute_k_hop_neighbors_fast(
+                            edge_index, batch_vec, dense_index, seed_indices, mask
+                        )
                     else:
-                        k_hop_mask = self._compute_k_hop_neighbors(adj, seed_indices, mask)
-                    
-                    cand_mask = available_mask & k_hop_mask & active.unsqueeze(-1)               # [B, N]
+                        k_hop_mask = self._compute_k_hop_neighbors(
+                            adj, seed_indices, mask
+                        )
+
+                    cand_mask = (
+                        available_mask & k_hop_mask & active.unsqueeze(-1)
+                    )  # [B, N]
 
                     if cand_mask.any():
                         # Local scalars for threshold prediction
-                        if (edge_index is not None and batch_vec is not None and dense_index is not None and deg_total_flat is not None):
+                        if (
+                            edge_index is not None
+                            and batch_vec is not None
+                            and dense_index is not None
+                            and deg_total_flat is not None
+                        ):
                             phi_all = self._local_size_features_fast(
-                                edge_index, batch_vec, dense_index, cand_mask, seed_indices, deg_total_flat
+                                edge_index,
+                                batch_vec,
+                                dense_index,
+                                cand_mask,
+                                seed_indices,
+                                deg_total_flat,
                             )
                         else:
-                            phi_all = self._local_size_features(adj, cand_mask, seed_indices)        # [B, 3]
+                            phi_all = self._local_size_features(
+                                adj, cand_mask, seed_indices
+                            )  # [B, 3]
 
                         # Threshold predictor input on valid graphs
-                        seed_features = x_seed_st[valid_seeds]                                   # [Bv, D]
-                        context_features = global_context[valid_seeds]                           # [Bv, nhid]
-                        phi = phi_all[valid_seeds]                                               # [Bv, 3]
-                        seed_ctx_feats = torch.cat([seed_features, context_features], dim=-1)    # [Bv, D+nhid]
+                        seed_features = x_seed_st[valid_seeds]  # [Bv, D]
+                        context_features = global_context[valid_seeds]  # [Bv, nhid]
+                        phi = phi_all[valid_seeds]  # [Bv, 3]
+                        seed_ctx_feats = torch.cat(
+                            [seed_features, context_features], dim=-1
+                        )  # [Bv, D+nhid]
 
                         # Current cluster mask (only seeds set so far for this cluster)
-                        cluster_mask_cur = assignment_matrix[:, :, cluster_idx] > 0.5            # [B, N]
+                        cluster_mask_cur = (
+                            assignment_matrix[:, :, cluster_idx] > 0.5
+                        )  # [B, N]
 
                         # Precompute z = (edges->cluster)/deg in O(E) and pick the valid rows
-                        if edge_index is not None and batch_vec is not None and dense_index is not None and deg_total_flat is not None:
+                        if (
+                            edge_index is not None
+                            and batch_vec is not None
+                            and dense_index is not None
+                            and deg_total_flat is not None
+                        ):
                             z_frac_all = self._edges_to_cluster_frac_fast(
-                                edge_index, batch_vec, dense_index, cluster_mask_cur, mask, deg_total_flat
+                                edge_index,
+                                batch_vec,
+                                dense_index,
+                                cluster_mask_cur,
+                                mask,
+                                deg_total_flat,
                             )  # [B,N]
-                            z_frac_valid = z_frac_all[valid_seeds]                       # [Bv,N]
+                            z_frac_valid = z_frac_all[valid_seeds]  # [Bv,N]
                         else:
                             z_frac_valid = None
 
@@ -454,26 +501,38 @@ class Partitioner(nn.Module):
                         # Prepare inputs for valid seed graphs only
                         if valid_seeds.any():
                             valid_indices = torch.where(valid_seeds)[0]
-                            x_valid = x[valid_seeds]                                             # [Bv, N, F]
-                            adj_valid = adj[valid_seeds] if adj is not None else None            # [Bv, N, N] or None
-                            cluster_mask_valid = cluster_mask_cur[valid_seeds]                   # [Bv, N]
-                            cand_mask_valid = cand_mask[valid_seeds]                             # [Bv, N]
-                            x_seed_st_valid = x_seed_st[valid_seeds]                             # [Bv, F]
-                            
-                            hard_sel_valid, soft_sel_valid, theta, exp_stats = self.expander(
-                                x=x_valid,
-                                adj=None if z_frac_valid is not None else adj_valid,  # skip dense adj when we have z
-                                seed_ctx_feats=seed_ctx_feats,
-                                local_stats=phi,
-                                cluster_mask=cluster_mask_valid,
-                                cand_mask=cand_mask_valid,
-                                seed_repr=x_seed_st_valid,
-                                z_frac=z_frac_valid                                  # <-- NEW
+                            x_valid = x[valid_seeds]  # [Bv, N, F]
+                            adj_valid = (
+                                adj[valid_seeds] if adj is not None else None
+                            )  # [Bv, N, N] or None
+                            cluster_mask_valid = cluster_mask_cur[
+                                valid_seeds
+                            ]  # [Bv, N]
+                            cand_mask_valid = cand_mask[valid_seeds]  # [Bv, N]
+                            x_seed_st_valid = x_seed_st[valid_seeds]  # [Bv, F]
+
+                            hard_sel_valid, soft_sel_valid, theta, exp_stats = (
+                                self.expander(
+                                    x=x_valid,
+                                    adj=None
+                                    if z_frac_valid is not None
+                                    else adj_valid,  # skip dense adj when we have z
+                                    seed_ctx_feats=seed_ctx_feats,
+                                    local_stats=phi,
+                                    cluster_mask=cluster_mask_valid,
+                                    cand_mask=cand_mask_valid,
+                                    seed_repr=x_seed_st_valid,
+                                    z_frac=z_frac_valid,  # <-- NEW
+                                )
                             )
-                            
+
                             # Broadcast back to full batch
-                            hard_sel = torch.zeros(B, N, device=device, dtype=hard_sel_valid.dtype)
-                            soft_sel = torch.zeros(B, N, device=device, dtype=soft_sel_valid.dtype)
+                            hard_sel = torch.zeros(
+                                B, N, device=device, dtype=hard_sel_valid.dtype
+                            )
+                            soft_sel = torch.zeros(
+                                B, N, device=device, dtype=soft_sel_valid.dtype
+                            )
                             hard_sel[valid_seeds] = hard_sel_valid
                             soft_sel[valid_seeds] = soft_sel_valid
                         else:
@@ -484,22 +543,34 @@ class Partitioner(nn.Module):
                         # Update assignments and availability (hard bookkeeping)
                         if valid_seeds.any():
                             for i, b in enumerate(valid_indices):
-                                expansion_nodes = (hard_sel[b] > 0.5).nonzero(as_tuple=True)[0]
+                                expansion_nodes = (hard_sel[b] > 0.5).nonzero(
+                                    as_tuple=True
+                                )[0]
                                 for n_idx in expansion_nodes:
-                                    if cand_mask[b, n_idx]:  # Double-check it's a valid candidate
+                                    if cand_mask[
+                                        b, n_idx
+                                    ]:  # Double-check it's a valid candidate
                                         assignment_matrix[b, n_idx, cluster_idx] = 1.0
                                         available_mask[b, n_idx] = False
 
                         # Use soft probabilities for cluster embeddings (gradients)
-                        y_soft = soft_sel                                                        # [B, N]
-                        
+                        y_soft = soft_sel  # [B, N]
+
                         # Compute cardinality loss
                         if self.lambda_card > 0 and valid_seeds.any():
-                            mu = self.cardinality_prior(phi_all[valid_seeds]).detach()           # [Bv] no gradient through prior
-                            expected_size = exp_stats["expected_size"] if "expected_size" in exp_stats else torch.zeros_like(mu)
-                            card_loss = self.lambda_card * ((expected_size - mu) ** 2).mean()
+                            mu = self.cardinality_prior(
+                                phi_all[valid_seeds]
+                            ).detach()  # [Bv] no gradient through prior
+                            expected_size = (
+                                exp_stats["expected_size"]
+                                if "expected_size" in exp_stats
+                                else torch.zeros_like(mu)
+                            )
+                            card_loss = (
+                                self.lambda_card * ((expected_size - mu) ** 2).mean()
+                            )
                             # Store cardinality loss for logging (you might need to aggregate this at model level)
-                            if not hasattr(self, '_card_loss'):
+                            if not hasattr(self, "_card_loss"):
                                 self._card_loss = card_loss
                             else:
                                 self._card_loss = self._card_loss + card_loss
@@ -514,14 +585,16 @@ class Partitioner(nn.Module):
 
             # --- Cluster embedding for this cluster ---
             # Hard cluster embedding (existing mask average)
-            cluster_mask = assignment_matrix[:, :, cluster_idx] > 0.5                  # [B, N]
+            cluster_mask = assignment_matrix[:, :, cluster_idx] > 0.5  # [B, N]
             cluster_size = cluster_mask.sum(dim=-1, keepdim=True).float().clamp_min(1.0)
-            h_hard = ((cluster_mask.unsqueeze(-1) * x).sum(dim=1) / cluster_size)     # [B, D]
+            h_hard = (cluster_mask.unsqueeze(-1) * x).sum(
+                dim=1
+            ) / cluster_size  # [B, D]
 
             # Soft cluster embedding (ST seed + threshold-based expansion)
-            m_soft = w_seed + y_soft                                                  # [B, N]
+            m_soft = w_seed + y_soft  # [B, N]
             den = m_soft.sum(dim=1, keepdim=True).clamp_min(1.0)
-            h_soft = (m_soft.unsqueeze(-1) * x).sum(dim=1) / den                      # [B, D]
+            h_soft = (m_soft.unsqueeze(-1) * x).sum(dim=1) / den  # [B, D]
 
             # Straight-through feature: forward = hard, backward = soft
             cluster_embedding = h_hard + (h_soft - h_soft.detach())
@@ -534,33 +607,37 @@ class Partitioner(nn.Module):
 
             # Update global context with a light residual from this cluster (no gradient loop)
             if active.any():
-                cluster_context = self.context_encoder(cluster_embedding.detach())     # [B, nhid]
+                cluster_context = self.context_encoder(
+                    cluster_embedding.detach()
+                )  # [B, nhid]
                 global_context = global_context + 0.1 * cluster_context
 
         # Fallback: one cluster with all valid nodes
         if not cluster_embeddings:
-            cluster_embedding = (mask.unsqueeze(-1) * x).sum(dim=1) / mask.sum(dim=-1, keepdim=True).float().clamp_min(1.0)
+            cluster_embedding = (mask.unsqueeze(-1) * x).sum(dim=1) / mask.sum(
+                dim=-1, keepdim=True
+            ).float().clamp_min(1.0)
             cluster_embeddings = [cluster_embedding]
             assignment_matrix[:, :, 0] = mask.float()
 
         # Stack cluster features
-        cluster_features = torch.stack(cluster_embeddings, dim=1)                      # [B, S, D]
+        cluster_features = torch.stack(cluster_embeddings, dim=1)  # [B, S, D]
 
         return cluster_features, assignment_matrix
 
     def _compute_k_hop_neighbors_fast(
         self,
-        edge_index: torch.Tensor,    # [2,E]
-        batch_vec: torch.Tensor,     # [N_total]
-        dense_index: torch.Tensor,   # [B,N]
-        seed_local_idx: torch.Tensor,# [B]
-        mask: torch.Tensor,          # [B,N]
+        edge_index: torch.Tensor,  # [2,E]
+        batch_vec: torch.Tensor,  # [N_total]
+        dense_index: torch.Tensor,  # [B,N]
+        seed_local_idx: torch.Tensor,  # [B]
+        mask: torch.Tensor,  # [B,N]
     ) -> torch.Tensor:
         """O(kE) multi-graph BFS from one seed per graph. Returns [B,N] bool."""
         device = edge_index.device
         B, N = mask.shape
         b_arange = torch.arange(B, device=device)
-        seed_global = dense_index[b_arange, seed_local_idx]             # [B]
+        seed_global = dense_index[b_arange, seed_local_idx]  # [B]
 
         N_total = int(batch_vec.size(0))
         reachable = torch.zeros(N_total, dtype=torch.bool, device=device)
@@ -569,7 +646,9 @@ class Partitioner(nn.Module):
 
         src, dst = edge_index[0], edge_index[1]
         for _ in range(self.k_hop):
-            new_flat = scatter_max(current[src].long(), dst, dim=0, dim_size=N_total)[0].bool()
+            new_flat = scatter_max(current[src].long(), dst, dim=0, dim_size=N_total)[
+                0
+            ].bool()
             new_flat = new_flat & (~reachable)
             if not new_flat.any():
                 break
@@ -584,23 +663,23 @@ class Partitioner(nn.Module):
 
     def _local_size_features_fast(
         self,
-        edge_index: torch.Tensor,      # [2,E]
-        batch_vec: torch.Tensor,       # [N_total]
-        dense_index: torch.Tensor,     # [B,N]
-        cand_mask: torch.Tensor,       # [B,N] bool
+        edge_index: torch.Tensor,  # [2,E]
+        batch_vec: torch.Tensor,  # [N_total]
+        dense_index: torch.Tensor,  # [B,N]
+        cand_mask: torch.Tensor,  # [B,N] bool
         seed_local_idx: torch.Tensor,  # [B]
-        deg_total_flat: torch.Tensor   # [N_total]
+        deg_total_flat: torch.Tensor,  # [N_total]
     ) -> torch.Tensor:
         """
         O(E) compute of (n_cand_log, seed_link_frac, cand_density). Returns [B,3].
         """
         device = edge_index.device
         B, N = cand_mask.shape
-        n_cand = cand_mask.sum(dim=1).to(torch.float32)                 # [B]
+        n_cand = cand_mask.sum(dim=1).to(torch.float32)  # [B]
         n_cand_log = (n_cand + 1.0).log()
 
         b_arange = torch.arange(B, device=device)
-        seed_global = dense_index[b_arange, seed_local_idx]             # [B]
+        seed_global = dense_index[b_arange, seed_local_idx]  # [B]
 
         # Flatten candidate mask
         N_total = int(batch_vec.size(0))
@@ -611,17 +690,19 @@ class Partitioner(nn.Module):
 
         # deg_seed→C
         src, dst = edge_index[0], edge_index[1]
-        deg_to_C_flat = scatter_add(cand_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total)
-        deg_seed_cand = deg_to_C_flat[seed_global]                      # [B]
+        deg_to_C_flat = scatter_add(
+            cand_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total
+        )
+        deg_seed_cand = deg_to_C_flat[seed_global]  # [B]
 
         # CORRECT: fraction of seed's edges going to candidate set
-        deg_seed_total = deg_total_flat[seed_global].clamp_min(1.0)     # [B]
-        seed_link_frac = deg_seed_cand / deg_seed_total                 # [B]
+        deg_seed_total = deg_total_flat[seed_global].clamp_min(1.0)  # [B]
+        seed_link_frac = deg_seed_cand / deg_seed_total  # [B]
 
         # Candidate-induced edges per graph (undirected counted once)
-        in_C = cand_flat[src] & cand_flat[dst]                          # [E]
+        in_C = cand_flat[src] & cand_flat[dst]  # [E]
         e_cand = scatter_add(in_C.to(torch.float32), batch_vec[src], dim=0, dim_size=B)
-        e_cand = 0.5 * e_cand                                           # [B]
+        e_cand = 0.5 * e_cand  # [B]
 
         denom = (n_cand * (n_cand - 1.0) * 0.5).clamp_min(1.0)
         cand_density = e_cand / denom
@@ -630,12 +711,12 @@ class Partitioner(nn.Module):
 
     def _edges_to_cluster_frac_fast(
         self,
-        edge_index: torch.Tensor,      # [2,E]
-        batch_vec: torch.Tensor,       # [N_total]
-        dense_index: torch.Tensor,     # [B,N]
-        cluster_mask: torch.Tensor,    # [B,N] bool
-        mask: torch.Tensor,            # [B,N] bool
-        deg_total_flat: torch.Tensor   # [N_total]
+        edge_index: torch.Tensor,  # [2,E]
+        batch_vec: torch.Tensor,  # [N_total]
+        dense_index: torch.Tensor,  # [B,N]
+        cluster_mask: torch.Tensor,  # [B,N] bool
+        mask: torch.Tensor,  # [B,N] bool
+        deg_total_flat: torch.Tensor,  # [N_total]
     ) -> torch.Tensor:
         """z_i = (# of edges from i into current cluster) / deg(i), in O(E). Returns [B,N]."""
         device = edge_index.device
@@ -649,7 +730,9 @@ class Partitioner(nn.Module):
         clus_flat = torch.zeros(N_total, dtype=torch.bool, device=device)
         clus_flat[flat_idx[valid]] = cluster_mask.view(-1)[valid]
 
-        e2c_flat = scatter_add(clus_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total)  # [N_total]
+        e2c_flat = scatter_add(
+            clus_flat[dst].to(torch.float32), src, dim=0, dim_size=N_total
+        )  # [N_total]
         z_flat = e2c_flat / deg_total_flat.clamp_min(1.0)
 
         z = torch.zeros_like(cluster_mask, dtype=torch.float32)
@@ -658,9 +741,9 @@ class Partitioner(nn.Module):
 
     def get_cardinality_loss(self) -> torch.Tensor:
         """Get accumulated cardinality loss and reset."""
-        if hasattr(self, '_card_loss'):
+        if hasattr(self, "_card_loss"):
             loss = self._card_loss
-            delattr(self, '_card_loss')
+            delattr(self, "_card_loss")
             return loss
         return torch.tensor(0.0)
 
@@ -669,6 +752,7 @@ class Partitioner(nn.Module):
 
 
 # ------------------------- Gradient Flow Test -------------------------
+
 
 def _grad_flow_test():
     """
@@ -703,8 +787,12 @@ def _grad_flow_test():
 
     # Model
     part = Partitioner(
-        nfeat=D, max_clusters=Smax, nhid=nhid,
-        k_hop=2, cluster_size_max=3, termination_threshold=0.8
+        nfeat=D,
+        max_clusters=Smax,
+        nhid=nhid,
+        k_hop=2,
+        cluster_size_max=3,
+        termination_threshold=0.8,
     ).to(device)
     part.train()
 
@@ -714,10 +802,10 @@ def _grad_flow_test():
     clf.train()
 
     # Forward
-    cluster_features, cluster_adj, assignment = part(x, adj, mask)  # [B, S, D]
+    cluster_features, assignment = part(x, adj, mask)  # [B, S, D], [B, N, S]
     # Pool over clusters
-    pooled = cluster_features.mean(dim=1)                            # [B, D]
-    logits = clf(pooled)                                             # [B, C]
+    pooled = cluster_features.mean(dim=1)  # [B, D]
+    logits = clf(pooled)  # [B, C]
 
     # Dummy labels
     y = torch.randint(0, num_classes, (B,), device=device)
@@ -734,15 +822,26 @@ def _grad_flow_test():
     def has_grad(module) -> bool:
         got = False
         for p in module.parameters():
-            if p.requires_grad and p.grad is not None and torch.isfinite(p.grad).all() and p.grad.norm() > 0:
+            if (
+                p.requires_grad
+                and p.grad is not None
+                and torch.isfinite(p.grad).all()
+                and p.grad.norm() > 0
+            ):
                 got = True
                 break
         return got
 
     seed_ok = has_grad(part.seed_selector)
     threshold_ok = has_grad(part.expander.threshold_head)
-    exp_wq_ok = part.expander.Wq.weight.grad is not None and part.expander.Wq.weight.grad.norm() > 0
-    exp_wk_ok = part.expander.Wk.weight.grad is not None and part.expander.Wk.weight.grad.norm() > 0
+    exp_wq_ok = (
+        part.expander.Wq.weight.grad is not None
+        and part.expander.Wq.weight.grad.norm() > 0
+    )
+    exp_wk_ok = (
+        part.expander.Wk.weight.grad is not None
+        and part.expander.Wk.weight.grad.norm() > 0
+    )
     x_ok = x.grad is not None and x.grad.norm() > 0
 
     print("\nGradient flow check:")
@@ -753,8 +852,12 @@ def _grad_flow_test():
     print(f"  input x grad:          {'OK' if x_ok else 'MISS'}")
 
     assert seed_ok, "No gradient reached seed_selector (check ST seed wiring)."
-    assert threshold_ok, "No gradient reached threshold_head (check threshold-based weighting)."
-    assert exp_wq_ok and exp_wk_ok, "No gradient reached expander projections (check seed_repr and y_st use)."
+    assert threshold_ok, (
+        "No gradient reached threshold_head (check threshold-based weighting)."
+    )
+    assert exp_wq_ok and exp_wk_ok, (
+        "No gradient reached expander projections (check seed_repr and y_st use)."
+    )
     assert x_ok, "No gradient reached input x (check ST path into h_soft)."
 
     print("✅ Gradient flow passed.")
@@ -800,10 +903,10 @@ if __name__ == "__main__":
         nhid=hidden_dim,
         k_hop=2,
         cluster_size_max=15,
-        termination_threshold=0.8
+        termination_threshold=0.8,
     ).to(device)
 
-    print(f"Input shapes:")
+    print("Input shapes:")
     print(f"  x:   {x.shape}")
     print(f"  adj: {adj.shape}")
     print(f"  mask:{mask.shape}")
@@ -819,26 +922,30 @@ if __name__ == "__main__":
         # Stats
         print("\nAssignment stats:")
         for b in range(batch_size):
-            assigned_nodes = assignment_matrix[b].sum(dim=0)   # nodes per cluster
-            node_assignments = assignment_matrix[b].sum(dim=1) # clusters per node
+            assigned_nodes = assignment_matrix[b].sum(dim=0)  # nodes per cluster
+            node_assignments = assignment_matrix[b].sum(dim=1)  # clusters per node
 
             print(f"  Batch {b}:")
             print(f"    Nodes per cluster: {assigned_nodes.tolist()}")
             print(f"    Total assigned:    {node_assignments.sum().item()}")
-            print(f"    Coverage:          {float(node_assignments.sum().item()) / num_nodes:.2%}")
+            print(
+                f"    Coverage:          {float(node_assignments.sum().item()) / num_nodes:.2%}"
+            )
             multi_assigned = (node_assignments > 1).sum().item()
             print(f"    Multi-assigned:    {multi_assigned}")
 
         # k-hop demo
-        print(f"\nK-hop demo:")
+        print("\nK-hop demo:")
         seed_idx = torch.tensor([0, 1], device=device)
         khop_mask = partitioner._compute_k_hop_neighbors(adj, seed_idx, mask)
         for b in range(batch_size):
             reachable = int(khop_mask[b].sum().item())
-            print(f"  Batch {b}: {reachable}/{num_nodes} nodes reachable from seed {seed_idx[b].item()}")
+            print(
+                f"  Batch {b}: {reachable}/{num_nodes} nodes reachable from seed {seed_idx[b].item()}"
+            )
 
         # Temperature demo
-        print(f"\nTemperature annealing:")
+        print("\nTemperature annealing:")
         initial_temp = partitioner.get_temperature()
         print(f"  Initial tau: {initial_temp:.4f}")
         for epoch in range(3):
@@ -849,7 +956,6 @@ if __name__ == "__main__":
         print("\n✅ Functional tests passed.")
     except Exception as e:
         print(f"\n❌ Functional test failed: {e}")
-        import traceback
         traceback.print_exc()
 
     # Gradient flow test
