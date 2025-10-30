@@ -1,5 +1,3 @@
-[![arXiv](https://img.shields.io/badge/arXiv-2510.01632-b31b1b.svg)](https://arxiv.org/abs/2510.01632)
-
 # BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning
 
 * Generate rich reisue-level and protein-level embeddings for proteins that capture protein structure modularity.
@@ -8,16 +6,6 @@
 
 ![](https://raw.githubusercontent.com/OliverLaboratory/BioBlobs/refs/heads/main/blobs.png)
 
-## Cite
-
-```
-@article{wang2025bioblobs,
-  title={BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning},
-  author={Wang, Xin and Oliver, Carlos},
-  journal={arXiv preprint arXiv:2510.01632},
-  year={2025}
-}
-```
 
 ## Installation
 
