@@ -1,4 +1,5 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2510.01632-b31b1b.svg)](https://arxiv.org/abs/2510.01632)
+---
 
 # BioBlobs: Differentiable Graph Partitioning for Protein Representation Learning
 
