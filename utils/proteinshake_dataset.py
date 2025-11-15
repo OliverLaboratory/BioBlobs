@@ -209,6 +209,7 @@ class ProteinClassificationDataset(data.Dataset):
             x=X_ca,
             seq=seq,
             name=name,
+            resnum=protein['resnum'],
             node_s=node_s,
             node_v=node_v,
             edge_s=edge_s,
@@ -358,6 +359,7 @@ def generator_to_structures(generator, dataset_name="ec", token_map=None, origin
 
         # Build coords in residue order; count completeness
         coords = []
+        resnums = []
         complete_residues = 0
         for res_num in sorted(residues):
             atoms = residues[res_num]
@@ -366,6 +368,7 @@ def generator_to_structures(generator, dataset_name="ec", token_map=None, origin
             if is_complete:
                 complete_residues += 1
             coords.append(residue_coords)
+            resnums.append(res_num)
 
         total_residues = len(residues)
         completion_rate = complete_residues / total_residues if total_residues else 0.0
@@ -416,6 +419,7 @@ def generator_to_structures(generator, dataset_name="ec", token_map=None, origin
                 "seq": adjusted_seq,
                 "coords": coords,
                 "label": label,
+                "resnum": resnums
             }
         )
 

@@ -1,21 +1,64 @@
+import sys
+from io import StringIO
+from collections import defaultdict
+import requests
+
+import pandas as pd
 import networkx as nx
+from Bio.PDB import PDBParser
 from torch_geometric.utils import to_networkx
 
 from proteinshake_dataset import get_dataset, create_dataloader
 
 DATASETS = ['ec']
-ALGOS = ['louvain']
+ALGOS = ['louvain', 'scop']
+ALGOS = ['scop']
+
+
+
+# Path to local SCOP classification file
+SCOP_CLA_FILE = "data/dir.cla.scope.2.08-stable.txt"
+
+SCOP_DF = pd.read_csv(
+    SCOP_CLA_FILE,
+    sep='\t',
+    comment='#',
+    names=['domain_id', 'pdb_id', 'chain_range', 'scop_class', 'sunid', 'scop_hierarchy'],
+    dtype=str
+)
+
+def scop(protein):
+    all_domains = SCOP_DF.loc[SCOP_DF['pdb_id'] == protein.name.lower()]
+    print(protein)
+    assignments = [None] * len(protein.x)
+    for _, domain in all_domains.iterrows():
+        chain, res_range = domain['chain_range'].split(":")
+        if res_range:
+            range_low, range_hi = map(int, res_range.split("-"))
+        else:
+            range_low = 0
+            range_hi = len(protein.x)
+        for ind, resnum in enumerate(protein.resnum):
+            if resnum in range(range_low, range_hi):
+                assignments[ind] = domain['domain_id']
+        pass
+    return assignments
 
 def get_partitions(dataset, algo='louvain'):
     all_assignments = []
     for g in dataset:
-        g_nx = to_networkx(g)
         if algo == 'louvain': 
+            g_nx = to_networkx(g)
             parts = nx.community.louvain_communities(g_nx, seed=123)
             assignments = [None] * len(g_nx.nodes())
             for partition_idx, partition_nodes in enumerate(parts):
                 for node in partition_nodes:
                     assignments[node] = partition_idx
+        if algo == 'scop':
+            assignments = scop(g)
+            print(assignments)
+            pass
+
         all_assignments.append(assignments)
     return all_assignments
 
