@@ -56,20 +56,23 @@ def scop(protein):
             pass
     return assignments
 
+def louvain(g):
+    g_nx = to_networkx(g)
+    parts = nx.community.louvain_communities(g_nx, seed=123)
+    assignments = [None] * len(g_nx.nodes())
+    for partition_idx, partition_nodes in enumerate(parts):
+        for node in partition_nodes:
+            assignments[node] = partition_idx
+    return assignments
+
 def get_partitions(dataset, algo='louvain'):
     all_assignments = []
     for g in dataset:
         if algo == 'louvain': 
-            g_nx = to_networkx(g)
-            parts = nx.community.louvain_communities(g_nx, seed=123)
-            assignments = [None] * len(g_nx.nodes())
-            for partition_idx, partition_nodes in enumerate(parts):
-                for node in partition_nodes:
-                    assignments[node] = partition_idx
+            assignments = louvain(g)
         if algo == 'scop':
             assignments = scop(g)
             pass
-
         all_assignments.append(assignments)
     return all_assignments
 
