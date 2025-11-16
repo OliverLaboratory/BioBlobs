@@ -1,4 +1,5 @@
 import sys
+import re
 from io import StringIO
 from collections import defaultdict
 import requests
@@ -29,19 +30,30 @@ SCOP_DF = pd.read_csv(
 
 def scop(protein):
     all_domains = SCOP_DF.loc[SCOP_DF['pdb_id'] == protein.name.lower()]
-    print(protein)
     assignments = [None] * len(protein.x)
     for _, domain in all_domains.iterrows():
-        chain, res_range = domain['chain_range'].split(":")
-        if res_range:
-            range_low, range_hi = map(int, res_range.split("-"))
-        else:
-            range_low = 0
-            range_hi = len(protein.x)
-        for ind, resnum in enumerate(protein.resnum):
-            if resnum in range(range_low, range_hi):
-                assignments[ind] = domain['domain_id']
-        pass
+        chunks = domain['chain_range'].split(",")
+        for chunk in chunks:
+            chain, res_range = chunk.split(":")
+            if res_range:
+                try:
+                    match = re.match(r'(-?\d+)-(-?\d+)', res_range)
+                    if match:
+                        range_low = int(match.group(1))
+                        range_hi = int(match.group(2))
+                    else:
+                        continue
+                except ValueError:
+                    print(res_range)
+                    print(protein.resnum)
+                    continue
+            else:
+                range_low = 0
+                range_hi = len(protein.x)
+            for ind, resnum in enumerate(protein.resnum):
+                if resnum in range(range_low, range_hi):
+                    assignments[ind] = domain['domain_id']
+            pass
     return assignments
 
 def get_partitions(dataset, algo='louvain'):
@@ -56,7 +68,6 @@ def get_partitions(dataset, algo='louvain'):
                     assignments[node] = partition_idx
         if algo == 'scop':
             assignments = scop(g)
-            print(assignments)
             pass
 
         all_assignments.append(assignments)
