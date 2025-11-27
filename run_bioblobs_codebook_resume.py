@@ -149,6 +149,7 @@ def main(cfg: DictConfig):
         split_similarity_threshold=cfg.data.split_similarity_threshold,
         data_dir=cfg.data.data_dir,
         test_mode=cfg.data.get("test_mode", False),
+        edge_types=cfg.data.edge_types,
     )
 
     train_loader = create_dataloader(

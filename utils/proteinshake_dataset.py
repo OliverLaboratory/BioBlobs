@@ -93,14 +93,15 @@ class ProteinClassificationDataset(data.Dataset):
         data_list,
         num_classes=None,
         num_positional_embeddings=16,
-        top_k=30,
+        edge_types="knn_30",
         num_rbf=16,
         device="cpu",
     ):
         super(ProteinClassificationDataset, self).__init__()
 
         self.data_list = data_list
-        self.top_k = top_k
+        self.edge_types = edge_types
+        self.edge_method, self.edge_value = self._parse_edge_types(edge_types)
         self.num_rbf = num_rbf
         self.num_positional_embeddings = num_positional_embeddings
         self.device = device
@@ -132,6 +133,31 @@ class ProteinClassificationDataset(data.Dataset):
         }
         self.num_amino_acids = 21  # 20 standard amino acids + X for unknown
         self.num_to_letter = {v: k for k, v in self.letter_to_num.items()}
+
+    def _parse_edge_types(self, edge_types):
+        """
+        Parse edge_types string to extract method and value.
+        
+        Args:
+            edge_types: String like "knn_30", "knn_8", "eps_16", etc.
+        
+        Returns:
+            tuple: (method, value) where method is "knn" or "eps", value is int
+        """
+        parts = edge_types.split("_")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid edge_types format: {edge_types}. Expected format: 'method_value' (e.g., 'knn_30', 'eps_16')")
+        
+        method, value_str = parts
+        if method not in ["knn", "eps"]:
+            raise ValueError(f"Invalid edge method: {method}. Must be 'knn' or 'eps'")
+        
+        try:
+            value = int(value_str)
+        except ValueError:
+            raise ValueError(f"Invalid edge value: {value_str}. Must be an integer")
+        
+        return method, value
 
     def _infer_num_classes(self, data_list):
         labels = [item.get("label", 0) for item in data_list if "label" in item]
@@ -182,7 +208,14 @@ class ProteinClassificationDataset(data.Dataset):
             # seq = seq[mask]
 
             X_ca = coords[:, 1]  # CA coordinates
-            edge_index = torch_cluster.knn_graph(X_ca, k=self.top_k)
+            
+            # Construct edges based on method
+            if self.edge_method == "knn":
+                edge_index = torch_cluster.knn_graph(X_ca, k=self.edge_value)
+            elif self.edge_method == "eps":
+                edge_index = torch_cluster.radius_graph(X_ca, r=self.edge_value)
+            else:
+                raise ValueError(f"Unknown edge method: {self.edge_method}")
 
             pos_embeddings = self._positional_embeddings(edge_index)
             E_vectors = X_ca[edge_index[0]] - X_ca[edge_index[1]]
@@ -450,7 +483,7 @@ def generator_to_structures(generator, dataset_name="ec", token_map=None, origin
     return structures, token_map, filtered_indices
 
 def get_dataset(
-    dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False
+    dataset_name, split="structure", split_similarity_threshold=0.7, data_dir="./data", test_mode=False, edge_types="knn_30"
 ):
     """
     Get train, validation, and test datasets for the specified protein classification task.
@@ -464,6 +497,7 @@ def get_dataset(
         split_similarity_threshold (float): Similarity threshold for splitting
         data_dir (str): Directory to store/load data files
         test_mode (bool): If True, limit datasets to small sizes for testing (100 train, 20 val, 20 test)
+        edge_types (str): Edge construction method and value (e.g., 'knn_30', 'eps_16')
 
     Returns:
         tuple: (train_dataset, val_dataset, test_dataset, num_classes)
@@ -660,18 +694,19 @@ def get_dataset(
 
     # Create separate datasets for each split
     train_dataset = ProteinClassificationDataset(
-        train_structures, num_classes=num_classes
+        train_structures, num_classes=num_classes, edge_types=edge_types
     )
     val_dataset = ProteinClassificationDataset(
-        val_structures, num_classes=num_classes
+        val_structures, num_classes=num_classes, edge_types=edge_types
     )
     test_dataset = ProteinClassificationDataset(
-        test_structures, num_classes=num_classes
+        test_structures, num_classes=num_classes, edge_types=edge_types
     )
 
     print(f"Train dataset size: {len(train_dataset)}")
     print(f"Validation dataset size: {len(val_dataset)}")
     print(f"Test dataset size: {len(test_dataset)}")
+    print(f"Edge construction: {edge_types}")
 
     return train_dataset, val_dataset, test_dataset, num_classes
 

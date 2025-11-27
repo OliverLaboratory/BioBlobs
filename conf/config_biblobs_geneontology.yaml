@@ -9,6 +9,7 @@ data:
   split_similarity_threshold: 0.7
   data_dir: /workspace/BIOBLOBS/partoken-protein/data
   test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  edge_types: knn_30
 
 model:
   node_in_dim: [6, 3]

@@ -31,7 +31,7 @@ conda activate bioblobs
 Install dependencies:
 ```bash
 # PyTorch with CUDA 12.8
-pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
 
 # PyTorch Geometric
 pip install torch_geometric
@@ -60,8 +60,9 @@ Train on Enzyme Commission dataset:
 python run_bioblobs_multistage.py \
     data.dataset_name=ec \  
     data.split=structure \  # data split 
-    multistage.stage0.epochs=120 \
-    multistage.stage1.epochs=30 \
+    data.edge_types=knn_16 \ 
+    train.stage0.epochs=120 \
+    train.stage1.epochs=30 \
 ```
 
 Train on Gene Ontology dataset:

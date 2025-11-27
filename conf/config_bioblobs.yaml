@@ -8,7 +8,8 @@ data:
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /home/wangx86/iclr2026/BioBlobs/data
-  test_mode: false  
+  test_mode: false
+  edge_types: knn_30  
 
 model:
   node_in_dim: [6, 3]

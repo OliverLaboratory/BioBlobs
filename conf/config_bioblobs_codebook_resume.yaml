@@ -22,6 +22,7 @@ data:
   split_similarity_threshold: 0.7
   data_dir: /root/ICLR2026/partoken-protein/data
   test_mode: false  # Set to true for testing with limited data sizes (100 train, 20 val, 20 test)
+  edge_types: knn_30
 
 # Model configuration (will be loaded from checkpoint if load_model_config_from_checkpoint=true)
 model:

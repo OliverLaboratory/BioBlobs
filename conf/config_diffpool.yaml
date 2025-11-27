@@ -8,6 +8,7 @@ data:
   split: structure
   split_similarity_threshold: 0.7
   data_dir: /sb/oliver_lab/data/wangx86/partoken-protein/gvp-baseline/data
+  edge_types: knn_30
 
 model:
   node_in_dim: [6, 3]
