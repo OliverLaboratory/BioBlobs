@@ -46,11 +46,12 @@ model:
 train:
   # Global hyperparameters (shared across all stages)
   batch_size: 128
-  num_workers: 8
+  num_workers: 4
   seed: 42
   models_dir: ./saved_models
   use_wandb: false
   wandb_project: bioblobs_multistage
+  job_name: exp
   # Cosine learning rate schedule with warmup
   use_cosine_schedule: true
   warmup_epochs: 5

@@ -9,17 +9,64 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import Callback
 from utils.proteinshake_dataset import get_dataset, create_dataloader
 from utils.utils import set_seed
 import torch
 import wandb
 from datetime import datetime
 from pytorch_lightning.callbacks import ModelCheckpoint
+import time
 from utils.train_w_codebook import MultiStageBioBlobsLightning
 from utils.train_w_codebook_multilabel import MultiStageBioBlobsMultiLabelLightning
 from hydra.utils import to_absolute_path
 from utils.interpretability import run_interpretability_analysis
 import json
+
+
+class EpochTimingCallback(Callback):
+    """Callback to track and log epoch training time to WandB."""
+    
+    def __init__(self, stage_idx):
+        super().__init__()
+        self.stage_idx = stage_idx
+        self.epoch_start_time = None
+        self.train_start_time = None
+        self.val_start_time = None
+    
+    def on_train_epoch_start(self, trainer, pl_module):
+        """Record start time of training epoch."""
+        self.epoch_start_time = time.time()
+        self.train_start_time = time.time()
+    
+    def on_validation_epoch_start(self, trainer, pl_module):
+        """Record start time of validation."""
+        self.val_start_time = time.time()
+    
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Log validation time."""
+        if self.val_start_time is not None:
+            val_time = time.time() - self.val_start_time
+            pl_module.log(f'stage{self.stage_idx}/val_time_seconds', val_time, sync_dist=True)
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Log epoch timing at the end of each epoch."""
+        if self.epoch_start_time is not None:
+            # Total epoch time (train + val)
+            total_epoch_time = time.time() - self.epoch_start_time
+            
+            # Training time only (approximate - excludes validation)
+            train_time = time.time() - self.train_start_time
+            if self.val_start_time is not None:
+                train_time = self.val_start_time - self.train_start_time
+            
+            # Log metrics
+            pl_module.log(f'stage{self.stage_idx}/epoch_time_seconds', total_epoch_time, sync_dist=True)
+            pl_module.log(f'stage{self.stage_idx}/train_time_seconds', train_time, sync_dist=True)
+            
+            # Print to console
+            print(f"  ⏱️  Epoch {trainer.current_epoch}: "
+                  f"Total={total_epoch_time:.2f}s, Train={train_time:.2f}s")
 
 
 def initialize_codebook(model, train_loader, device, max_batches=50):
@@ -68,8 +115,8 @@ def create_wandb_logger(cfg):
     
     return WandbLogger(
         project=cfg.train.wandb_project,
-        name=f"{cfg.data.dataset_name}_multistage_{timestamp}",
-        tags=["bioblobs-multistage", "two-stage-training", cfg.data.dataset_name],
+        name=f"{cfg.data.dataset_name}_multistage_{cfg.train.job_name}_{timestamp}",
+        tags=["bioblobs-multistage", cfg.data.dataset_name],
     )
 
 
@@ -114,6 +161,9 @@ def create_trainer(cfg, stage_idx, custom_output_dir, wandb_logger, checkpoint_c
             f"stage{stage_idx}_name": stage_name,
         }, allow_val_change=True)
     
+    # Create timing callback to track and log epoch timing
+    timing_callback = EpochTimingCallback(stage_idx=stage_idx)
+    
     return pl.Trainer(
         max_epochs=stage_cfg.epochs,
         logger=wandb_logger,
@@ -121,7 +171,7 @@ def create_trainer(cfg, stage_idx, custom_output_dir, wandb_logger, checkpoint_c
         devices=1 if torch.cuda.is_available() else None,
         log_every_n_steps=20,
         default_root_dir=os.path.join(custom_output_dir, f"stage{stage_idx}"),
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, timing_callback],
         enable_checkpointing=True,
         enable_progress_bar=True,
     )

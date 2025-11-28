@@ -283,6 +283,15 @@ def analyze_single_protein(
         }
     )
 
+    # Blob composition analysis
+    blob_composition = {}
+    for cluster_idx in all_clusters:  # Already importance-ranked
+        # Since assignment is binary (0 or 1), we can use either > 0 or > 0.5
+        residue_ids = np.where(assignment[:, cluster_idx] > 0)[0]
+        blob_composition[int(cluster_idx)] = residue_ids.tolist()
+
+    result["blob_composition"] = blob_composition
+
     return result
 
 
