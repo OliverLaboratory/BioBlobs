@@ -10,3 +10,5 @@ __pycache__
 /case_study
 /checkpoints
 .DS_Store
+/previous_runs
+/interpretability_results

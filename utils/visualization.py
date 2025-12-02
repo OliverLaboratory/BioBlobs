@@ -33,9 +33,24 @@ def protein_to_pdb(protein, path):
 
     if mode == 'atom':
         df['element'] = df['atom_type'].apply(lambda x: x[:1])
+        # Ensure atom_number starts from 1
+        if 'atom_number' in df.columns:
+            df['atom_number'] = range(1, len(df) + 1)
+        # Ensure residue_number starts from 1 (renumber if needed)
+        if 'residue_number' in df.columns:
+            min_res = df['residue_number'].min()
+            if min_res != 1:
+                df['residue_number'] = df['residue_number'] - min_res + 1
     else:
         df['element'] = 'C'
-        df['atom_number'] = df['residue_number']
+        # For residue mode, ensure both start from 1
+        if 'residue_number' in df.columns:
+            min_res = df['residue_number'].min()
+            if min_res != 1:
+                df['residue_number'] = df['residue_number'] - min_res + 1
+        else:
+            df['residue_number'] = range(1, len(df) + 1)
+        df['atom_number'] = range(1, len(df) + 1)
         df['atom_type'] = 'CA'
 
     lines = []
