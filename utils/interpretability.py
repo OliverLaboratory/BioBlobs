@@ -109,12 +109,56 @@ def blob_info_batch(
             )
         )
 
+        # Extract codebook indices if codebook exists
+        codebook_indices = None
+        if hasattr(actual_model, "codebook"):
+            # Recompute cluster features to get codebook indices
+            # Process through GVP layers to get node features
+            if seq is not None and hasattr(actual_model, "sequence_embedding"):
+                seq_emb = actual_model.sequence_embedding(seq)
+                h_V_aug = (torch.cat([h_V[0], seq_emb], dim=-1), h_V[1])
+            else:
+                h_V_aug = h_V
+
+            h_V_encoded = actual_model.node_encoder(h_V_aug)
+            h_E_encoded = actual_model.edge_encoder(h_E)
+            
+            for layer in actual_model.gvp_layers:
+                h_V_encoded = layer(h_V_encoded, batch.edge_index, h_E_encoded)
+            
+            node_features = actual_model.output_projection(h_V_encoded)
+            
+            # Convert to dense format for partitioning
+            from torch_geometric.utils import to_dense_batch
+            dense_x, mask = to_dense_batch(node_features, batch.batch)
+            dense_index, _ = to_dense_batch(
+                torch.arange(node_features.size(0), device=node_features.device), batch.batch
+            )
+            
+            # Apply partitioner to get cluster features
+            cluster_features, assignment_matrix = actual_model.partitioner(
+                dense_x, None, mask, edge_index=batch.edge_index, batch_vec=batch.batch, dense_index=dense_index
+            )
+            
+            # Get valid cluster mask
+            cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
+            
+            # Get codebook assignments
+            _, code_indices, _, _ = actual_model.codebook(cluster_features, mask=cluster_valid_mask)
+            codebook_indices = code_indices.cpu().numpy()
+        else:
+            # Model doesn't have codebook (bypass_codebook mode)
+            # Create empty array with same shape as assignment matrix
+            assignment_shape = stats["assignment_matrix"].shape
+            codebook_indices = np.full((assignment_shape[0], assignment_shape[1]), -1, dtype=np.int64)
+
         return {
             "predictions": predictions.cpu().numpy(),
             "probabilities": probabilities.cpu().numpy(),
             "importance_scores": importance_scores.cpu().numpy(),
             "true_labels": batch.y.cpu().numpy(),
             "assignment_matrix": stats["assignment_matrix"].cpu().numpy(),
+            "codebook_indices": codebook_indices,
             "cluster_stats": {
                 "avg_coverage": stats["avg_coverage"],
                 "avg_clusters": stats["avg_clusters"],
@@ -213,16 +257,19 @@ def analyze_single_protein(
     true_label = importance_data["true_labels"][protein_idx]
     importance = importance_data["importance_scores"][protein_idx]
     assignment = importance_data["assignment_matrix"][protein_idx]
+    codebook_indices = importance_data["codebook_indices"][protein_idx]
 
     # Find valid (non-empty) clusters
     cluster_sizes = assignment.sum(axis=0)  
     valid_clusters = cluster_sizes > 0
     valid_importance = importance[valid_clusters]
     valid_cluster_indices = np.where(valid_clusters)[0]
+    valid_codebook_indices = codebook_indices[valid_clusters]
 
     # Rank clusters by importance
     importance_ranking = np.argsort(valid_importance)[::-1]  # Descending order
     all_clusters = valid_cluster_indices[importance_ranking]
+    ranked_codebook_indices = valid_codebook_indices[importance_ranking]
 
     # Determine if multi-label or single-label classification
     is_multilabel = _is_multilabel_prediction(prob)
@@ -280,6 +327,7 @@ def analyze_single_protein(
             "importance_concentration": float(importance_concentration),
             "cluster_indices": all_clusters.tolist(),  # All clusters
             "cluster_importance": valid_importance[importance_ranking].tolist(),
+            "blob_codebook_indices": ranked_codebook_indices.tolist(),  # Codebook indices in importance order
         }
     )
 

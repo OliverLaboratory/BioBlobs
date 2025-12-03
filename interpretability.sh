@@ -3,8 +3,8 @@ CUDA_VISIBLE_DEVICES=1 python run_interpretability.py \
     --dataset_name ec \
     --split structure \
     --split_type test \
-    --batch_size 16 \
-    --num_workers 8 \
-    --max_batches 100 \
+    --batch_size 128 \
+    --num_workers 4 \
+    --max_batches 150 \
     --output_dir ./interpretability_results \
     --data_dir /data/oliver_lab/wangx86/bioblobs/proteinshake_data \
