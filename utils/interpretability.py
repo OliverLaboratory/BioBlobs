@@ -2,7 +2,7 @@
 Interpretability utilities for bioblobs model analysis.
 
 This module provides functions for analyzing and interpreting bioblobs model predictions,
-including cluster importance scores, attention visualization, and biological insights.
+including blob importance scores, attention visualization, and biological insights.
 """
 
 import torch
@@ -72,7 +72,7 @@ def blob_info_batch(
     model, batch, device: Optional[torch.device] = None
 ) -> Dict[str, Any]:
     """
-    Extract cluster importance scores for a batch of proteins.
+    Extract blob importance scores for a batch of proteins.
 
     Args:
         model: bioblobs model (either raw model or lightning module)
@@ -112,7 +112,7 @@ def blob_info_batch(
         # Extract codebook indices if codebook exists
         codebook_indices = None
         if hasattr(actual_model, "codebook"):
-            # Recompute cluster features to get codebook indices
+            # Recompute blob features to get codebook indices
             # Process through GVP layers to get node features
             if seq is not None and hasattr(actual_model, "sequence_embedding"):
                 seq_emb = actual_model.sequence_embedding(seq)
@@ -135,16 +135,16 @@ def blob_info_batch(
                 torch.arange(node_features.size(0), device=node_features.device), batch.batch
             )
             
-            # Apply partitioner to get cluster features
-            cluster_features, assignment_matrix = actual_model.partitioner(
+            # Apply partitioner to get blob features
+            blob_features, assignment_matrix = actual_model.partitioner(
                 dense_x, None, mask, edge_index=batch.edge_index, batch_vec=batch.batch, dense_index=dense_index
             )
             
-            # Get valid cluster mask
-            cluster_valid_mask = (assignment_matrix.sum(dim=1) > 0)
+            # Get valid blob mask
+            blob_valid_mask = (assignment_matrix.sum(dim=1) > 0)
             
             # Get codebook assignments
-            _, code_indices, _, _ = actual_model.codebook(cluster_features, mask=cluster_valid_mask)
+            _, code_indices, _, _ = actual_model.codebook(blob_features, mask=blob_valid_mask)
             codebook_indices = code_indices.cpu().numpy()
         else:
             # Model doesn't have codebook (bypass_codebook mode)
@@ -159,10 +159,10 @@ def blob_info_batch(
             "true_labels": batch.y.cpu().numpy(),
             "assignment_matrix": stats["assignment_matrix"].cpu().numpy(),
             "codebook_indices": codebook_indices,
-            "cluster_stats": {
+            "blob_stats": {
                 "avg_coverage": stats["avg_coverage"],
-                "avg_clusters": stats["avg_clusters"],
-                "avg_cluster_size": stats["avg_cluster_size"],
+                "avg_blobs": stats["avg_clusters"],
+                "avg_blob_size": stats["avg_cluster_size"],
                 "avg_max_importance": stats.get("avg_max_importance", 0.0),
                 "avg_importance_entropy": stats.get("avg_importance_entropy", 0.0),
                 "importance_concentration": stats.get("importance_concentration", 0.0),
@@ -259,16 +259,16 @@ def analyze_single_protein(
     assignment = importance_data["assignment_matrix"][protein_idx]
     codebook_indices = importance_data["codebook_indices"][protein_idx]
 
-    # Find valid (non-empty) clusters
-    cluster_sizes = assignment.sum(axis=0)  
-    valid_clusters = cluster_sizes > 0
-    valid_importance = importance[valid_clusters]
-    valid_cluster_indices = np.where(valid_clusters)[0]
-    valid_codebook_indices = codebook_indices[valid_clusters]
+    # Find valid (non-empty) blobs
+    blob_sizes = assignment.sum(axis=0)  
+    valid_blobs = blob_sizes > 0
+    valid_importance = importance[valid_blobs]
+    valid_blob_indices = np.where(valid_blobs)[0]
+    valid_codebook_indices = codebook_indices[valid_blobs]
 
-    # Rank clusters by importance
+    # Rank blobs by importance
     importance_ranking = np.argsort(valid_importance)[::-1]  # Descending order
-    all_clusters = valid_cluster_indices[importance_ranking]
+    all_blobs = valid_blob_indices[importance_ranking]
     ranked_codebook_indices = valid_codebook_indices[importance_ranking]
 
     # Determine if multi-label or single-label classification
@@ -313,7 +313,7 @@ def analyze_single_protein(
             "classification_type": "single-label",
         }
 
-    # Add clustering analysis (common to both types)
+    # Add blob analysis (common to both types)
     importance_concentration = 1.0 - (
         (-np.sum(valid_importance * np.log(valid_importance + 1e-8)))
         / np.log(len(valid_importance))
@@ -321,22 +321,22 @@ def analyze_single_protein(
 
     result.update(
         {
-            "num_valid_clusters": int(valid_clusters.sum()),
-            "cluster_sizes": cluster_sizes[valid_clusters].tolist(),
+            "num_valid_blobs": int(valid_blobs.sum()),
+            "blob_sizes": blob_sizes[valid_blobs].tolist(),
             "importance_scores": valid_importance.tolist(),
             "importance_concentration": float(importance_concentration),
-            "cluster_indices": all_clusters.tolist(),  # All clusters
-            "cluster_importance": valid_importance[importance_ranking].tolist(),
+            "blob_indices": all_blobs.tolist(),  # All blobs
+            "blob_importance": valid_importance[importance_ranking].tolist(),
             "blob_codebook_indices": ranked_codebook_indices.tolist(),  # Codebook indices in importance order
         }
     )
 
     # Blob composition analysis
     blob_composition = {}
-    for cluster_idx in all_clusters:  # Already importance-ranked
+    for blob_idx in all_blobs:  # Already importance-ranked
         # Since assignment is binary (0 or 1), we can use either > 0 or > 0.5
-        residue_ids = np.where(assignment[:, cluster_idx] > 0)[0]
-        blob_composition[int(cluster_idx)] = residue_ids.tolist()
+        residue_ids = np.where(assignment[:, blob_idx] > 0)[0]
+        blob_composition[int(blob_idx)] = residue_ids.tolist()
 
     result["blob_composition"] = blob_composition
 
@@ -377,7 +377,7 @@ def dataset_inter_results(
 
         # Extract importance data for this batch
         importance_data = blob_info_batch(model, batch, device)
-        batch_stats.append(importance_data["cluster_stats"])
+        batch_stats.append(importance_data["blob_stats"])
 
         # Analyze each protein in the batch
         batch_size = len(importance_data["predictions"])
@@ -425,14 +425,14 @@ def dataset_inter_results(
 
     aggregated_stats.update(
         {
-            "avg_clusters_per_protein": np.mean(
-                [r["num_valid_clusters"] for r in all_results]
+            "avg_blobs_per_protein": np.mean(
+                [r["num_valid_blobs"] for r in all_results]
             ),
             "avg_importance_concentration": np.mean(
                 [r["importance_concentration"] for r in all_results]
             ),
             "avg_coverage": np.mean([bs["avg_coverage"] for bs in batch_stats]),
-            "avg_cluster_size": np.mean([bs["avg_cluster_size"] for bs in batch_stats]),
+            "avg_blob_size": np.mean([bs["avg_blob_size"] for bs in batch_stats]),
             "avg_max_importance": np.mean(
                 [bs["avg_max_importance"] for bs in batch_stats]
             ),
@@ -532,16 +532,16 @@ def print_interpretability_summary(results: Dict[str, Any]) -> None:
 
     # print(f"  • Average confidence: {stats['avg_confidence']:.3f}")
 
-    print("\n🧬 Clustering Analysis:")
-    print(f"  • Average clusters per protein: {stats['avg_clusters_per_protein']:.1f}")
-    print(f"  • Average cluster coverage: {stats['avg_coverage']:.3f}")
-    print(f"  • Average cluster size: {stats['avg_cluster_size']:.1f}")
+    print("\n🧬 Blob Analysis:")
+    print(f"  • Average blobs per protein: {stats['avg_blobs_per_protein']:.1f}")
+    print(f"  • Average blob coverage: {stats['avg_coverage']:.3f}")
+    print(f"  • Average blob size: {stats['avg_blob_size']:.1f}")
 
     print("\n🎯 Attention Analysis:")
     print(
         f"  • Average importance concentration: {stats['avg_importance_concentration']:.3f}"
     )
-    print(f"  • Average max cluster importance: {stats['avg_max_importance']:.3f}")
+    print(f"  • Average max blob importance: {stats['avg_max_importance']:.3f}")
 
     # print("\n✅ Correct vs ❌ Incorrect Predictions:")
     # correct_stats = stats["correct_vs_incorrect"]["correct"]
