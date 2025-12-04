@@ -152,6 +152,20 @@ def blob_info_batch(
             assignment_shape = stats["assignment_matrix"].shape
             codebook_indices = np.full((assignment_shape[0], assignment_shape[1]), -1, dtype=np.int64)
 
+        # Extract resnum from batch (list of lists, one per protein)
+        resnum_list = []
+        if hasattr(batch, "resnum"):
+            # resnum is stored as a list in the batch
+            if isinstance(batch.resnum, list):
+                resnum_list = batch.resnum
+            else:
+                # If it's a tensor or other format, convert appropriately
+                resnum_list = batch.resnum.tolist() if hasattr(batch.resnum, "tolist") else list(batch.resnum)
+        else:
+            # If resnum is not available, create empty lists
+            batch_size = len(predictions)
+            resnum_list = [[] for _ in range(batch_size)]
+
         return {
             "predictions": predictions.cpu().numpy(),
             "probabilities": probabilities.cpu().numpy(),
@@ -159,6 +173,7 @@ def blob_info_batch(
             "true_labels": batch.y.cpu().numpy(),
             "assignment_matrix": stats["assignment_matrix"].cpu().numpy(),
             "codebook_indices": codebook_indices,
+            "resnum": resnum_list,
             "blob_stats": {
                 "avg_coverage": stats["avg_coverage"],
                 "avg_blobs": stats["avg_clusters"],
@@ -258,6 +273,13 @@ def analyze_single_protein(
     importance = importance_data["importance_scores"][protein_idx]
     assignment = importance_data["assignment_matrix"][protein_idx]
     codebook_indices = importance_data["codebook_indices"][protein_idx]
+    
+    # Extract resnum for this protein
+    resnum_list = importance_data.get("resnum", [])
+    if resnum_list and protein_idx < len(resnum_list):
+        resnum = resnum_list[protein_idx]
+    else:
+        resnum = []
 
     # Find valid (non-empty) blobs
     blob_sizes = assignment.sum(axis=0)  
@@ -319,6 +341,22 @@ def analyze_single_protein(
         / np.log(len(valid_importance))
     )
 
+    # Blob composition and residue number analysis
+    blob_composition = {}
+    blob_residue_nums = {}
+    for blob_idx in all_blobs:  # Already importance-ranked
+        # Since assignment is binary (0 or 1), we can use either > 0 or > 0.5
+        residue_ids = np.where(assignment[:, blob_idx] > 0)[0]
+        blob_composition[int(blob_idx)] = residue_ids.tolist()
+        
+        # Map residue indices to residue numbers
+        if resnum and len(resnum) > 0:
+            # Get residue numbers for residues in this blob
+            residue_nums = [resnum[int(rid)] for rid in residue_ids if int(rid) < len(resnum)]
+            blob_residue_nums[int(blob_idx)] = residue_nums
+        else:
+            blob_residue_nums[int(blob_idx)] = []
+
     result.update(
         {
             "num_valid_blobs": int(valid_blobs.sum()),
@@ -328,15 +366,9 @@ def analyze_single_protein(
             "blob_indices": all_blobs.tolist(),  # All blobs
             "blob_importance": valid_importance[importance_ranking].tolist(),
             "blob_codebook_indices": ranked_codebook_indices.tolist(),  # Codebook indices in importance order
+            "residue_num": blob_residue_nums,  # Residue numbers mapped to blob indices
         }
     )
-
-    # Blob composition analysis
-    blob_composition = {}
-    for blob_idx in all_blobs:  # Already importance-ranked
-        # Since assignment is binary (0 or 1), we can use either > 0 or > 0.5
-        residue_ids = np.where(assignment[:, blob_idx] > 0)[0]
-        blob_composition[int(blob_idx)] = residue_ids.tolist()
 
     result["blob_composition"] = blob_composition
 
