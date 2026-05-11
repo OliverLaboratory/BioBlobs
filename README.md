@@ -89,7 +89,7 @@ python train_bioblobs.py \
   partitioners.num_blobs_per_protein=5 \
   partitioners.seed_radius=12.0 \
   partitioners.proximity_bias=0.5 \
-  partitioners.membership_hoyer=0.0
+  partitioners.membership_hoyer=0.1
 ```
 
 #### Swept hyperparameters
@@ -100,7 +100,7 @@ The four hyperparameters swept in the paper:
 | --- | --- | --- | --- | --- |
 | `partitioners.num_blobs_per_protein` | `K` | `5` | `conf/partitioners/bioblobs.yaml` | Fixed blob-proposal budget per protein. Each protein is partitioned into exactly `K` (possibly empty) blobs, which the MIL decoder weighs and aggregates. Larger `K` lets the model recover finer-grained substructures at the cost of more padded/empty slots and a wider MIL head. |
 | `partitioners.seed_radius` | `r` (Å) | `12.0` | `conf/partitioners/bioblobs.yaml` | Spatial radius (Å) of the locality window used when assigning residues to a blob seed. Smaller `r` produces tighter, more locally compact blobs; larger `r` allows blobs to span longer-range structural motifs. |
-| `partitioners.membership_hoyer` | `λ_H` | `0.0` | `conf/partitioners/bioblobs.yaml` | Weight of the Hoyer-Square (HS) sparsity regularizer applied to the soft residue→blob membership matrix. `0` disables the term; larger values push each residue's `K`-way membership toward a one-hot assignment, yielding sharper, more disjoint blobs. |
+| `partitioners.membership_hoyer` | `λ_H` | `0.1` | `conf/partitioners/bioblobs.yaml` | Weight of the Hoyer-Square (HS) sparsity regularizer applied to the soft residue→blob membership matrix. `0` disables the term; larger values push each residue's `K`-way membership toward a one-hot assignment, yielding sharper, more disjoint blobs. |
 | `decoders.use_blob_interaction` | — | `false` | `conf/decoders/mil.yaml` | If `true`, run a single self-attention layer across the `K` blobs before the MIL attention gate. Each blob attends to every other blob, and a `[B, K, K]` correlation matrix is exposed in the model's `extra` output for interpretability. |
 
 Sweep example:
@@ -116,24 +116,6 @@ python train_bioblobs.py \
   partitioners.membership_hoyer=1e-3 \
   decoders.use_blob_interaction=true
 ```
-
-### Baselines
-
-The same `train_bioblobs.py` runs every baseline by toggling the partitioner
-and decoder. All baselines run on the same frozen PLM encoder as BioBlobs
-itself (default `esm2_static`).
-
-| Variant | Override | Pooling op |
-| --- | --- | --- |
-| Mean-pool + MLP | `partitioners=none decoders=mlp pooling=mean` | explicit `PoolingOp(mean)` |
-| Simple attention pool | `partitioners=none decoders=simple_attn` | inside the decoder (`Linear(D, 1)` + masked softmax) |
-| Gated attention pool (Ilse 2018) | `partitioners=none decoders=attention_pool` | inside the decoder (additive `tanh(V·)·sigmoid(U·)` + softmax) |
-| Light Attention (Stärk 2021) | `partitioners=none decoders=light_attn` | inside the decoder (Conv1d attention + max-pool concat) |
-| BioBlobs + Light-Attn MIL head | `decoders=mil_light_attn`                | MIL head replaces gated attention with Light-Attention over `K` blobs |
-
-Each non-MIL pooling decoder sets `consumes_batch_data = True`, so the
-framework hands the full `batch_data` (with the residue mask) directly to
-the decoder and skips the explicit pooling step.
 
 ### Encoder swap
 

@@ -35,7 +35,7 @@ class BioBlobsPartitioner(BasePartitioner):
         membership_tau_init: float = 1.0,
         membership_tau_min: float = 0.25,
         membership_tau_decay: float = 0.95,
-        membership_hoyer: float = 0.0,
+        membership_hoyer: float = 0.1,
         pooling: str = "mean",
         emit_interpretability: bool = False,
         eps: float = 1e-8,
