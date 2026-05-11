@@ -1,0 +1,17 @@
+_target_: bioblobs.modules.partitioners.bioblobs.BioBlobsPartitioner  # Hydra target class
+name: bioblobs                         
+enabled: true                           
+requires_precomputed_partitions: false
+num_blobs_per_protein: 5               # fixed blob proposal budget K per protein
+seed_hidden_dim: 128                    # hidden units in the residue seed-scoring MLP
+attn_dim: 128                           # projection dimension for seed-query / node-key attention
+seed_radius: 12.0                       # spatial radius (Å) within which residues are blob candidates
+proximity_bias: 0.5                     # weight of the proximity term added to attention scores
+seed_tau_init: 1.0                      # initial Gumbel-softmax temperature for seed selection
+seed_tau_min: 0.25                      # minimum temperature floor for seed annealing
+seed_tau_decay: 0.95                    # per-epoch multiplicative decay for seed temperature
+membership_tau_init: 1.0                # initial sigmoid temperature for soft blob membership
+membership_tau_min: 0.25               # minimum temperature floor for membership annealing
+membership_tau_decay: 0.95             # per-epoch multiplicative decay for membership temperature
+membership_hoyer: 0.1                  # Hoyer-Square (HS) regularizer weight; 0 disables the partitioner-loss term
+emit_interpretability: false           # attach per-graph assignment provenance for interpretability consumers

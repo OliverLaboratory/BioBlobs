@@ -1,0 +1,32 @@
+# Light Attention decoder (Stärk et al., 2021).
+#
+# Replaces "mean-pool over residues + MLP" with a learned attention pool:
+#   (optional) LayerNorm(D) →
+#   two parallel Conv1d(D, D, kernel_size) over the residue axis →
+#   masked-softmax attention × value (sum over residues) ⊕ masked-max-pool →
+#   [B, 2D] → MLPDecoder(hidden_multipliers).
+#
+# Only the pooling op differs from the mean-pool baseline; head capacity
+# can be matched by setting hidden_multipliers=[2, 1] (so 2D → 4D → 2D → C
+# matches the mean-pool D → 4D → 2D → C hidden widths). Set proj_dim to
+# bottleneck the head to the same width as MILDecoder.input_proj.
+
+_target_: bioblobs.modules.decoders.light_attention_decoder.LightAttentionDecoder
+
+# LayerNorm(D) on the residue embeddings before the attention/value convs.
+input_layernorm: true
+
+# Conv1d kernel size (must be odd). 9 is the Stärk et al. default.
+kernel_size: 9
+
+# MLP hidden widths as multipliers of the MLP input dim (which is 2·D).
+# [2, 1] keeps hidden widths identical to the mean-pool baseline's [4, 2].
+hidden_multipliers: [2, 1]
+
+# Dropout in the MLP head.
+drop_rate: 0.1
+
+# Optional bottleneck: 2D → proj_dim → LayerNorm → MLP. Set to mirror the
+# MILDecoder.input_proj width (default mil_dim=512) for fair-comparison runs.
+# null = no bottleneck (faithful to Stärk et al.).
+proj_dim: null

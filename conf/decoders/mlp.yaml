@@ -1,0 +1,9 @@
+_target_: bioblobs.modules.decoders.mlp_decoder.MLPDecoder
+hidden_multipliers: [4, 2]
+drop_rate: 0.1
+# Optional input projection (Linear → LayerNorm) before the MLP. When set,
+# the MLP operates at proj_dim instead of the encoder's native dim. Mirrors
+# MILDecoder.input_proj so baselines can match the BioBlobs MIL classifier
+# capacity. null = no projection (legacy behavior).
+proj_dim: null
+# input_dim and num_classes will be auto-wired by framework

@@ -1,0 +1,15 @@
+defaults:
+  - datasets: venusx_site_fragment
+  - tasks: venusx_fragment_multiclass
+  - _self_
+
+datasets:
+  test_mode: false
+  edge_types: eps_8
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ./outputs/_hydra/${now:%Y-%m-%d_%H-%M-%S}
+  output_subdir: null

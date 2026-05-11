@@ -1,0 +1,19 @@
+dataset_name: venusx_site_fragment
+target: Act
+split_strategy: MF50
+split: ${.split_strategy}
+data_dir: ./data  # override with absolute path if needed
+hf_cache_dir: ${.data_dir}/hf_cache
+download_mode: reuse_dataset_if_exists
+source_repo_id: null
+pdb_repo_id: null
+split_similarity_threshold: 0.7
+test_mode: true
+edge_types: eps_8
+
+preprocessing:
+  min_backbone_completion: 0.95
+  num_workers: 4
+  strict_alignment: false
+
+device: cpu

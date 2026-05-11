@@ -1,0 +1,30 @@
+# BioBlobs Training Configuration
+# Uses BioBlobs partitioner + MIL decoder for interpretable blob-level classification
+
+defaults:
+  - datasets: ec
+  - encoders: esm2_static
+  - partitioners: bioblobs
+  - decoders: mil
+  - training: baseline
+  - tasks: multi-class
+  - _self_
+
+wandb:
+  project_name: BioBlobs
+  job_name: bioblobs_experiment
+  job_type: bioblobs_train
+  use_wandb: false
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ./outputs/_hydra/${now:%Y-%m-%d_%H-%M-%S}
+  output_subdir: null
+
+datasets:
+  test_mode: false
+
+# Pooling not used with MIL (decoder handles it internally)
+pooling: null

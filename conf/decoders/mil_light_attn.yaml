@@ -1,0 +1,31 @@
+# Light-Attention MIL Decoder Configuration
+#
+# Replaces the gated-attention MIL head (AttentionMILHead) with Stärk 2021's
+# Light-Attention head, applied along the K-blob axis instead of the residue
+# axis. Two parallel Conv1d(D, D, kernel_size) over K, masked-softmax across
+# blobs, then [attended ⊕ max-pool] → MLPDecoder.
+
+_target_: bioblobs.modules.decoders.mil_decoder.LightAttentionMILDecoder
+
+# Dropout rate for regularization
+dropout: 0.1
+
+# Return per-blob attention saliency for interpretability analysis
+return_attention: true
+
+# Number of blobs per protein (null = auto-detect from batch)
+num_blobs_per_protein: null
+
+# Conv1d kernel size along the K-blob axis. Must be odd. Smaller kernels are
+# preferred here because K is small (~20–24): k=1 gives per-blob channelwise
+# attention with no neighborhood; k=3 captures 3 consecutive (greedy-seed-
+# selection-ordered) blobs.
+kernel_size: 3
+
+# Bag-level classifier hidden layer multipliers. Head input is 2·D (concat of
+# attended and max-pool branches). Default [2, 1] gives 2D → 4D → 2D → C —
+# same hidden widths as the gated-attention head's [4, 2] on D → 4D → 2D → C.
+classifier_hidden_multipliers: [2, 1]
+
+# Shared MIL-head embedding width (matches mil.yaml).
+mil_dim: 512

@@ -1,0 +1,29 @@
+# Simple attention-pool decoder.
+#
+# Faithful port of GatedAttentionMLP from BioBlobs_VenusX
+# (train_baseline_attn.py): the minimal residue-level attention head with
+# only D+1 pool params.
+#
+#   (optional) LayerNorm(D) →
+#   s = Linear(D, 1)(h)  →  masked-softmax over valid residues  →
+#   z = Σ α_i h_i  →  MLPDecoder(hidden_multipliers).
+#
+# Sits between mean-pool + MLP (no learned weighting) and AttentionPoolDecoder
+# (full Ilse 2018 V/U/w sandwich).
+
+_target_: bioblobs.modules.decoders.simple_attn_decoder.SimpleAttnDecoder
+
+# LayerNorm(D) on residue embeddings before the scoring linear.
+input_layernorm: true
+
+# MLP hidden widths as multipliers of the MLP input dim (which is D).
+# Matches the mean-pool MLPDecoder default.
+hidden_multipliers: [4, 2]
+
+# Dropout in the MLP head.
+drop_rate: 0.1
+
+# Optional bottleneck: D → proj_dim → LayerNorm → MLP. Set to mirror
+# MILDecoder.input_proj width (default mil_dim=512) for fair-comparison runs.
+# null = no bottleneck.
+proj_dim: null

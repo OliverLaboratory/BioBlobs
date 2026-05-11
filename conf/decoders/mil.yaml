@@ -1,0 +1,37 @@
+# MIL Decoder Configuration
+# Multiple Instance Learning decoder for blob-based protein classification
+
+_target_: bioblobs.modules.decoders.mil_decoder.MILDecoder
+
+# Embedding dimension (auto-wired from encoder output)
+# embedding_dim: ${encoders.output_dim}
+
+# Number of classes (auto-wired from task)
+# num_classes: ${task.num_classes}
+
+# Dropout rate for regularization
+dropout: 0.1
+
+# Return attention weights for interpretability analysis
+return_attention: true
+
+# Return per-blob class logits/probabilities.
+# Keep this off for normal training; post-hoc interpretability enables it explicitly.
+return_instance_predictions: false
+
+# Number of blobs per protein (null = auto-detect from batch)
+num_blobs_per_protein: null
+
+# Enable inter-blob self-attention before the MIL gate.
+# Each blob attends to all other blobs; exposes blob_correlation [B, K, K] in outputs.
+use_blob_interaction: false
+
+# Bag-level classifier hidden layer multipliers.
+# Default matches the baseline MLP decoder (hidden_multipliers=[4, 2]) so the
+# MIL and MLP decoders share identical protein-level classifier capacity.
+classifier_hidden_multipliers: [4, 2]
+
+# Shared MIL-head embedding width. Encoder-native blob embeddings are projected
+# to this dim before the MIL attention + classifier, so head capacity is the
+# same across encoders (ESM2=640, SaProt=1280, GVP, GearNet, ...).
+mil_dim: 512

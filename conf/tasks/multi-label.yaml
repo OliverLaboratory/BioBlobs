@@ -1,0 +1,9 @@
+problem_type: multi_label
+loss: bce_with_logits
+metrics:
+  - fmax
+  - precision_at_fmax
+  - recall_at_fmax
+monitor_metric: val_fmax
+monitor_mode: max
+primary_metric: fmax

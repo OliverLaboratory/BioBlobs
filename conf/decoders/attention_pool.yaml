@@ -1,0 +1,36 @@
+# Basic attention-pool decoder (Ilse et al., 2018 — gated additive attention).
+#
+# Replaces "mean-pool over residues + MLP" with a single learned scoring
+# function over residues:
+#   (optional) LayerNorm(D) →
+#   u = tanh(V h);  g = sigmoid(U h)  (when gated);  s = w^T (u * g) →
+#   masked-softmax over valid residues →
+#   z = Σ α_i h_i  →  MLPDecoder(hidden_multipliers).
+#
+# Sits between mean-pool + MLP and the convolutional Light-Attention head:
+# no Conv1d residue mixing, no max-pool branch, just a single attention pool.
+
+_target_: bioblobs.modules.decoders.attention_pool_decoder.AttentionPoolDecoder
+
+# Width of the attention scoring projection V (and gate U when gated=true).
+# null defaults to input_dim (Ilse et al. default).
+attn_hidden_dim: null
+
+# Gated attention (Ilse 2018): tanh(Vh) * sigmoid(Uh) before scoring linear.
+# Set false for plain additive attention.
+gated: true
+
+# LayerNorm(D) on residue embeddings before attention.
+input_layernorm: true
+
+# MLP hidden widths as multipliers of the MLP input dim (which is D).
+# Matches the mean-pool MLPDecoder default.
+hidden_multipliers: [4, 2]
+
+# Dropout in the MLP head.
+drop_rate: 0.1
+
+# Optional bottleneck: D → proj_dim → LayerNorm → MLP. Set to mirror the
+# MILDecoder.input_proj width (default mil_dim=512) for fair-comparison runs.
+# null = no bottleneck.
+proj_dim: null

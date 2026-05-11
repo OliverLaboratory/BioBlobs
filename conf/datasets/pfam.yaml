@@ -1,0 +1,13 @@
+dataset_name: pfam
+split: random
+split_similarity_threshold: 0.7
+data_dir: ./data
+test_mode: true
+edge_types: knn_30
+
+preprocessing:
+  use_biopandas: true
+  min_backbone_completion: 0.95
+  num_workers: 32
+
+device: cpu

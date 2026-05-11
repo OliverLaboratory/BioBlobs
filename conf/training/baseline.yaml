@@ -1,0 +1,14 @@
+batch_size: 128
+num_workers: 4
+seed: 42
+bucket_by_size: true
+bucket_shuffle_batches: true
+bucket_drop_last: false
+bucket_seed: ${.seed}
+epochs: 100
+early_stopping_patience: 15    # epochs without monitor-metric improvement before training stops
+early_stopping_min_delta: 0.0  # min absolute improvement to reset patience; raise to 1e-3 for noisy fmax
+lr: 1e-3
+weight_decay: 0.0
+use_cosine_schedule: true
+warmup_epochs: 5

@@ -1,0 +1,40 @@
+encoders:
+  name: esm2_static
+  _target_: bioblobs.modules.encoders.precomputed_encoder.PrecomputedNodeFeatureEncoder
+  model_name: facebook/esm2_t30_150M_UR50D
+  output_dim: 640
+partitioners:
+  name: bioblobs
+  _target_: bioblobs.modules.partitioners.bioblobs.BioBlobsPartitioner
+  enabled: true
+  requires_precomputed_partitions: false
+  num_blobs_per_protein: 20
+  seed_hidden_dim: 128
+  attn_dim: 128
+  seed_radius: 12.0
+  proximity_bias: 0.25
+  seed_tau_init: 1.0
+  seed_tau_min: 0.25
+  seed_tau_decay: 0.95
+  membership_tau_init: 1.0
+  membership_tau_min: 0.25
+  membership_tau_decay: 0.95
+  membership_hoyer: 0.5
+  emit_interpretability: false
+decoders:
+  _target_: bioblobs.modules.decoders.mil_decoder.MILDecoder
+  mil_dim: 512
+  dropout: 0.1
+  use_blob_interaction: false
+  classifier_hidden_multipliers:
+  - 4
+  - 2
+  return_attention: false
+  return_instance_predictions: false
+codebooks:
+  enabled: false
+tasks:
+  problem_type: multi_class
+  num_classes: 242
+datasets:
+  dataset_name: ec_pretrain

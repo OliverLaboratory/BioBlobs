@@ -1,0 +1,28 @@
+name: esm2_static
+_target_: bioblobs.modules.encoders.precomputed_encoder.PrecomputedNodeFeatureEncoder
+
+# HuggingFace checkpoint to use for offline residue embeddings.
+model_name: "facebook/esm2_t30_150M_UR50D"
+
+# Hidden state selection. -1 means the last hidden layer.
+repr_layer: -1
+
+# Optional manual override. Null infers from model_name.
+output_dim: null
+
+# Windowing policy for long sequences.
+window_size: 1022
+window_overlap: 128
+
+# Maximum total residues per offline embedding batch.
+max_batch_tokens: 8192
+
+# Cache layout:
+#   <datasets.data_dir>/ec_proteinshake/<cache_dir>/<cache_key>/<split>/<protein>.pt
+cache_dir: "esm2_static_cache"
+cache_dtype: "float16"
+
+# Cache warmup behavior.
+precompute_missing: true
+overwrite_cache: false
+precompute_device: "cpu"

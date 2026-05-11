@@ -1,0 +1,11 @@
+problem_type: multi_class
+loss: cross_entropy
+metrics:
+  - accuracy
+  - macro_precision
+  - macro_recall
+  - macro_f1
+  - mcc
+monitor_metric: val_acc
+monitor_mode: max
+primary_metric: accuracy

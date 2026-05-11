@@ -1,0 +1,18 @@
+defaults:
+  - datasets: venusx_site_fragment
+  - encoders: esm2_static
+  - _self_
+
+datasets:
+  test_mode: false
+  edge_types: eps_8
+
+# Override `encoders=saprot_static` on CLI to switch to SaProt-650M.
+# Override `encoders.precompute_device=cuda` to use the GPU (default cpu).
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ./outputs/_hydra/${now:%Y-%m-%d_%H-%M-%S}
+  output_subdir: null

@@ -1,0 +1,15 @@
+dataset_name: ec
+ec_level: 1  # EC hierarchy level to predict (1-4). Proteins without this level are filtered out.
+split: random
+split_similarity_threshold: 0.7
+data_dir: ./data
+test_mode: true
+edge_types: knn_30
+
+# Preprocessing parameters
+preprocessing:
+  use_biopandas: true  # Always use Biopandas for PDB parsing
+  min_backbone_completion: 0.95  # Filter proteins with <50% complete backbone
+  num_workers: 32  # Number of parallel workers for PDB parsing (set to 1 to disable)
+  
+device: cpu

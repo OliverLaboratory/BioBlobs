@@ -1,0 +1,32 @@
+name: saprot_static
+_target_: bioblobs.modules.encoders.precomputed_encoder.PrecomputedNodeFeatureEncoder
+
+# HuggingFace checkpoint for offline residue embeddings.
+model_name: "westlake-repl/SaProt_650M_PDB"
+
+# Hidden state selection. -1 means the last hidden layer.
+repr_layer: -1
+
+# Explicit output dim (bypasses ESM2 model name lookup).
+output_dim: 1280
+
+# Windowing policy for long sequences (in residue count).
+window_size: 1022
+window_overlap: 128
+
+# Maximum total residues per offline embedding batch.
+max_batch_tokens: 8192
+
+# Cache layout:
+#   <datasets.data_dir>/<dataset>_proteinshake/<cache_dir>/<cache_key>/<split>/<protein>.pt
+cache_dir: "saprot_static_cache"
+cache_dtype: "float16"
+
+# Cache warmup behavior.
+precompute_missing: true
+overwrite_cache: false
+precompute_device: "cpu"
+
+# Foldseek binary for converting PDB structures to 3Di sequences.
+# null → $FOLDSEEK_BIN env var → "foldseek" in PATH.
+foldseek_bin: "data/foldseek/bin/foldseek"
