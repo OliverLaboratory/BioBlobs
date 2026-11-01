@@ -39,7 +39,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.6"]
+dev = ["ruff>=0.6", "pytest>=8"]
 
 [tool.uv]
 # This is an application repo, not a library; do not install the local
