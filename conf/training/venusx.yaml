@@ -1,0 +1,11 @@
+optimizer: adam
+lr: 1.0e-4
+weight_decay: 1.0e-4
+batch_size: 32
+epochs: 100
+schedule: cosine                 # CosineAnnealingLR(T_max=epochs, eta_min=eta_min_ratio * lr)
+eta_min_ratio: 0.01
+bucket_by_size: false
+num_workers: 0
+seed: 1
+deterministic: true

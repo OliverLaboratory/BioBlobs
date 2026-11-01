@@ -1,33 +1,28 @@
-"""Unified BioBlobs training entrypoint.
+"""Train BioBlobs or a comparator on one task, select on validation and test once.
 
-Defaults to the BioBlobs partitioner + MIL decoder. Override on the CLI to
-switch to the mean-pooling MLP baseline:
+Usage:
+    # A reported BioBlobs setting (see conf/experiment/)
+    python train_bioblobs.py +experiment=proteinshake/ec_sequence_esm2
 
-    # BioBlobs (default)
-    python train_bioblobs.py
+    # Comparators share the same entry point
+    python train_bioblobs.py datasets=ec partitioners=none decoders=mean_pool
+    python train_bioblobs.py datasets=ec encoders=gat_esm2 partitioners=none decoders=mean_pool
 
-    # Mean-pooling MLP baseline (encoder -> mean pool -> MLP)
-    python train_bioblobs.py partitioners=none decoders=mlp pooling=mean
+    # Three seeds
+    python train_bioblobs.py -m +experiment=venusx/act_esm2_labelfree training.seed=1,2,3
 """
 
 from __future__ import annotations
 
 import hydra
-from loguru import logger
 from omegaconf import DictConfig
 
-from bioblobs.training.experiments import build_single_run_output_dir
-from bioblobs.training.baseline_runner import run_baseline_experiment
+from bioblobs.training.trainer import train
 
 
-@hydra.main(version_base="1.1", config_path="conf", config_name="train_bioblobs")
+@hydra.main(version_base="1.3", config_path="conf", config_name="train_bioblobs")
 def main(cfg: DictConfig) -> None:
-    print("=" * 70)
-    logger.info("BioBlobs Training")
-    print("=" * 70)
-
-    output_dir = build_single_run_output_dir("outputs", cfg)
-    run_baseline_experiment(cfg, output_dir)
+    train(cfg, cfg.output_dir)
 
 
 if __name__ == "__main__":

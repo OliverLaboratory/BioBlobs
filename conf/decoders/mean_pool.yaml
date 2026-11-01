@@ -1,0 +1,6 @@
+name: mean_pool
+input_layernorm: false
+masked: false                    # true: average over residues with a C-alpha only
+proj_dim: 512
+dropout: 0.1
+hidden_multipliers: [4, 2]

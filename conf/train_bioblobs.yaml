@@ -1,30 +1,37 @@
-# BioBlobs Training Configuration
-# Uses BioBlobs partitioner + MIL decoder for interpretable blob-level classification
-
+# Entry config of train_bioblobs.py. Each group can be swapped on the command line; the
+# settings behind each reported number are in conf/experiment/.
 defaults:
   - datasets: ec
   - encoders: esm2_static
   - partitioners: bioblobs
   - decoders: mil
-  - training: baseline
-  - tasks: multi-class
+  - codebooks: none
+  - tasks: multi_class
+  - training: proteinshake
   - _self_
 
-wandb:
-  project_name: BioBlobs
-  job_name: bioblobs_experiment
-  job_type: bioblobs_train
-  use_wandb: false
+objective:
+  hoyer_weight: 0.3          # lambda_H, Hoyer sparsity of the memberships
+  seed_align_weight: 0.0     # seed alignment (site-supervised VenusX models only)
+  blob_align_weight: 0.0     # blob alignment (training-time benchmark only)
+  rvq_weight: 0.25           # weight of the RVQ commitment term (when codebooks.enabled)
+  class_balanced_beta: null  # effective-number class weights (SwissProt EC pretraining)
+
+selection:
+  metric: macro_f1           # validation metric for checkpoint selection (fmax for GO-MF)
+  patience: 15               # early-stopping patience in epochs
+  min_delta: 0.0
+  early_stop_any_of: null    # list: stop only when none of these metrics improves
+
+name: ${datasets.dataset_name}/${encoders.name}_${partitioners.name}_${decoders.name}
+output_dir: outputs/${name}/seed${training.seed}
 
 hydra:
+  run:
+    dir: ${output_dir}
+  sweep:
+    dir: outputs/multirun
+    subdir: ${hydra.job.num}
   job:
     chdir: false
-  run:
-    dir: ./outputs/_hydra/${now:%Y-%m-%d_%H-%M-%S}
   output_subdir: null
-
-datasets:
-  test_mode: false
-
-# Pooling not used with MIL (decoder handles it internally)
-pooling: null

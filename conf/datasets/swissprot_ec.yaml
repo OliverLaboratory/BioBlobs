@@ -1,0 +1,4 @@
+dataset_name: swissprot_ec
+data_dir: data
+max_len: 1000                     # drop longer proteins from training
+num_workers: 8

@@ -1,0 +1,32 @@
+# @package _global_
+# Tables 2, 10, 11: BioBlobs with seed alignment (site-supervised) on VenusX Act with SaProt-650M.
+defaults:
+  - override /datasets: venusx
+  - override /encoders: saprot_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /training: venusx
+
+name: venusx/act_saprot_seedalign
+datasets:
+  target: Act
+  site_supervised: true
+partitioners:
+  num_blobs: 24
+  seed_radius: 16.0
+  proximity_bias: 0.5
+decoders:
+  dropout: 0.1
+  use_blob_interaction: false
+training:
+  lr: 0.0003
+  weight_decay: 0.0001
+  batch_size: 32
+  epochs: 100
+objective:
+  hoyer_weight: 0
+  seed_align_weight: 0.1
+selection:
+  metric: macro_f1
+  patience: 30
+  early_stop_any_of: [macro_f1, site_soft_recall, composite]

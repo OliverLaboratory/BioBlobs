@@ -1,0 +1,4 @@
+defaults:
+  - ec
+  - _self_
+dataset_name: scop_sf
