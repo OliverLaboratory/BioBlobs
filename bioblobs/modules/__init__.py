@@ -1,1 +1,1 @@
-"""Modular components for BioBlobs framework."""
+"""Model components (Sections 3.1-3.3) and comparators."""
