@@ -6,7 +6,7 @@ runs BioBlobs. No precomputed caches are needed.
 
 ## Models
 
-- **Released model**, `bioblobs-mcsa-rvq-k8` (download from HF_MODEL_URL): third-level EC
+- **Released model**, `bioblobs-mcsa-rvq-k8` (on [Hugging Face](https://huggingface.co/xwang112358/BioBlobs)): third-level EC
   classes (242 classes), ESM2-T30 embeddings, 8 blobs with residual vector quantization. It is the
   model behind the paper's M-CSA results. The folder holds `model.safetensors`, `config.yaml` and
   `classes.json`.
@@ -15,6 +15,9 @@ runs BioBlobs. No precomputed caches are needed.
 ## Usage
 
 ```bash
+# Download the released model
+huggingface-cli download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
+
 # Every .pdb file in a folder, with the released model
 python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results
 

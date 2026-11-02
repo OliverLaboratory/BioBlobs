@@ -26,9 +26,11 @@ ESM2 and SaProt weights download from Hugging Face on first use. SaProt also nee
 ## Predict function and blobs for your own proteins
 
 The released model predicts third-level EC classes (242 classes) and is the model behind the
-paper's M-CSA results. Download it from HF_MODEL_URL, then run:
+paper's M-CSA results. Download it from [Hugging Face](https://huggingface.co/xwang112358/BioBlobs)
+and run it:
 
 ```bash
+huggingface-cli download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
 python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results
 ```
 
