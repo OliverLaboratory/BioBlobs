@@ -46,7 +46,7 @@ MISSING = [math.inf, math.inf, math.inf]
 Structure = dict[str, Any]
 
 
-def parse_backbone(pdb_path: str | Path) -> tuple[str, list, list[int]]:
+def parse_backbone(pdb_path: str | Path, chain: str | None = None) -> tuple[str, list, list[int]]:
     """Read the sequence and N/CA/C/O coordinates of every residue in a PDB file.
 
     Residues are keyed by residue number (chains and insertion codes are not separated);
@@ -55,6 +55,7 @@ def parse_backbone(pdb_path: str | Path) -> tuple[str, list, list[int]]:
 
     Args:
         pdb_path: Path to a PDB file.
+        chain: Keep only this chain (all atoms when None, as for the training data).
 
     Returns:
         ``(sequence, coords [N][4][3], residue_numbers)``.
@@ -62,6 +63,8 @@ def parse_backbone(pdb_path: str | Path) -> tuple[str, list, list[int]]:
     from biopandas.pdb import PandasPdb
 
     atoms = PandasPdb().read_pdb(str(pdb_path)).df["ATOM"]
+    if chain is not None:
+        atoms = atoms[atoms["chain_id"] == chain]
     first = atoms.drop_duplicates(subset=["residue_number"]).sort_values("residue_number")
     sequence = "".join(THREE_TO_ONE.get(name, "X") for name in first["residue_name"])
     residues: dict[int, dict[str, list[float]]] = defaultdict(dict)
