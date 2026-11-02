@@ -1,256 +1,112 @@
-# BioBlobs: Unsupervised Discovery of Functional Substructures for Protein Function Prediction
-Anonymous code release accompanying the paper *BioBlobs: Unsupervised Discovery of Functional Substructures for Protein Function Prediction*.
+# BioBlobs
 
-## Repository layout
+Code for **Unsupervised discovery of Functional Substructures** by Xin Wang, Kaiwen Shi and
+Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632)
 
-```
-.
-├── train_bioblobs.py          # Single training entrypoint (BioBlobs + baselines)
-├── inference.py               # Inference + blob interpretability on user PDBs
-├── preprocessing/             # Direct-to-mmap PLM caches + VenusX dataset prep
-│   ├── prepare_plm_cache.py              # ProteinShake (ec/go/pfam)
-│   ├── prepare_venusx_site_fragment.py   # VenusX download + staging
-│   └── prepare_venusx_plm_cache.py       # VenusX PLM mmap
-├── conf/                      # Hydra configs
-│   ├── train_bioblobs.yaml    # Default training config
-│   ├── datasets/              # ec, go, pfam (ProteinShake), venusx_site_fragment
-│   ├── encoders/              # esm2_static (default), saprot_static
-│   ├── partitioners/          # bioblobs, none
-│   ├── decoders/              # mil, mil_light_attn, mlp,
-│   │                          #   simple_attn, attention_pool, light_attn
-│   ├── tasks/                 # multi-class, multi-label, venusx_fragment_multiclass
-│   └── training/              # baseline.yaml
-├── bioblobs/                  # Python package
-│   ├── modules/               # Encoders, partitioners, decoders, pipeline ops
-│   ├── datasets/              # ProteinShake loaders, PDB parsing, PLM mmap caches
-│   │                          # (atom_representation, parallel, features live here)
-│   └── training/              # Lightning module, shared runner, metrics
-│                              # (experiments, fmax_metric, utils live here)
-├── bioblobs_framework.py      # Top-level encoder → partitioner → decoder model
-└── archive/                   # Variants and tooling not used by the paper
-```
+BioBlobs predicts protein function from a small set of learned, spatially local substructures
+called blobs. It works on frozen residue embeddings from a protein language model (ESM2 or SaProt)
+and the protein's structure. The blobs that carry a prediction point to candidate functional
+sites, although the model never sees residue-level labels.
 
-## Installation
+## Install
 
-The repo targets Linux x86_64, Python 3.12, PyTorch 2.7 + CUDA 12.8, and
-PyTorch Geometric. Dependencies (and the matching CUDA / PyG wheel
-indexes) are declared in `pyproject.toml`, so a single `uv sync` reproduces
-the environment from `uv.lock`:
+Linux x86_64 with Python 3.12, PyTorch 2.7 (CUDA 12.8) and PyTorch Geometric. `uv` installs the
+pinned environment from `uv.lock`:
 
 ```bash
+git clone https://github.com/OliverLaboratory/BioBlobs.git
+cd BioBlobs
 uv sync
 source .venv/bin/activate
 ```
 
-`uv sync` creates `./.venv/`, fetches CUDA 12.8 PyTorch wheels from the
-PyTorch index, and pulls the matching PyG kernel extensions (`pyg_lib`,
-`torch_scatter`, `torch_cluster`, `torch_sparse`, `torch_spline_conv`) from
-the PyG flat index — no manual install ordering required. The lockfile
-pins every transitive dependency for byte-exact reproducibility.
+ESM2 and SaProt weights download from Hugging Face on first use. SaProt also needs
+[Foldseek](https://github.com/steineggerlab/foldseek) to compute structure tokens.
 
+## Predict function and blobs for your own proteins
 
-## Datasets
+The released model predicts third-level EC classes (242 classes) and is the model behind the
+paper's M-CSA results. Download it from HF_MODEL_URL, then run:
 
-Training is wired to ProteinShake datasets (downloaded automatically on first
-run into `./data/`):
+```bash
+python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results
+```
 
-| Dataset | Tag | Task |
+This writes `results/predictions.csv` with the top class of each protein, and one JSON file per
+protein with the top classes, the blobs ranked by importance score with their residue numbers, and
+per-residue scores. [INFERENCE.md](INFERENCE.md) describes the options and outputs.
+
+## Train and evaluate
+
+Each reported setting has an experiment config in `conf/experiment/`. After preparing a dataset
+once, train three seeds and evaluate one of them:
+
+```bash
+python train_bioblobs.py -m +experiment=venusx/act_esm2_labelfree training.seed=1,2,3
+python evaluate.py --checkpoint outputs/venusx/act_esm2_labelfree/seed1/best.ckpt \
+    --score weighted_membership --out results/act_esm2_labelfree_seed1
+```
+
+[docs/REPRODUCE.md](docs/REPRODUCE.md) gives the data preparation steps and the command behind each
+table and figure.
+
+## Repository layout
+
+```
+train_bioblobs.py       train, select on validation, test once
+evaluate.py             test metrics and residue localization (ProteinShake, VenusX, M-CSA)
+inference.py            predictions, blobs and residue scores for your PDB files
+bioblobs/
+  model.py              BioBlobs: encoder -> partitioner -> (RVQ) -> MIL predictor
+  objectives.py         Hoyer sparsity, seed alignment, class-balanced weights
+  modules/              encoder, partitioner, MIL predictor, RVQ, and the comparator models
+  data/                 structures, embedding caches, ProteinShake, VenusX, Swiss-Prot EC, M-CSA
+  training/             Lightning module, trainer, metrics
+  localization/         residue scores, AUROC / AUPRC / F1@L, score baselines
+conf/                   Hydra configs, with the paper's settings in conf/experiment/
+preprocessing/          dataset download, structure parsing and embedding caches
+baselines/mcsa/         wrappers for the third-party M-CSA baselines
+data/mcsa/              M-CSA chain annotations and the evaluated enzyme lists
+tests/                  CPU smoke tests
+```
+
+## Paper to code
+
+| Component | Paper | Code |
 | --- | --- | --- |
-| Enzyme Commission | `ec`   | multi-class |
-| Pfam              | `pfam` | multi-class |
-| Gene Ontology     | `go`   | multi-label (`go_branch=molecular_function|biological_process|cellular_component`) |
+| Protein encoder (frozen ESM2-T30 or SaProt-650M) | §3.1 | `bioblobs/modules/encoder.py`, `bioblobs/modules/plm.py` |
+| Neural blob partitioner: seed selection, blob expansion | §3.2 | `NeuralBlobPartitioner.select_seeds`, `.expand_blobs` in `bioblobs/modules/partitioner.py` |
+| MIL predictor: blob embeddings, feature transform, attention gate, prediction head | §3.3 | `MILPredictor` in `bioblobs/modules/mil_predictor.py` |
+| Residue scores: maximum and attention-weighted membership | §3.3 | `max_membership`, `weighted_membership` in `bioblobs/localization/scores.py` |
+| Training objective with Hoyer sparsity | §3.4 | `hoyer_sparsity` in `bioblobs/objectives.py`, `BioBlobsModule.loss` |
+| Residual vector quantization | Appendix | `ResidualVQ` in `bioblobs/modules/rvq.py` |
+| Seed alignment (site-supervised VenusX models) | Appendix | `seed_alignment` in `bioblobs/objectives.py` |
+| Comparators: mean and attention pooling, DiffPool, TopK, SAGPool, GCN, GIN, GAT | §4 | `bioblobs/modules/pooling.py`, `bioblobs/modules/gnn.py` |
+| Localization metrics and score baselines | Appendix | `bioblobs/localization/metrics.py`, `bioblobs/localization/baselines.py` |
 
-The default config uses EC. Switch dataset with `datasets=<tag>`; switch GO
-branch with `datasets.go_branch=<branch>`.
+## Data
 
-## Training
+- [ProteinShake](https://github.com/BorgwardtLab/proteinshake) tasks: GO-MF, EC, Pfam, SCOP-FAM and SCOP-SF.
+- [VenusX](https://github.com/ai4protein/VenusX) functional-site datasets, with site annotations from InterPro.
+- Swiss-Prot enzymes from the [EC-Bench](https://github.com/dsaeedeh/EC-Bench) training set, with
+  AlphaFold DB v6 structures, for the EC model behind the M-CSA results.
+- Catalytic residues from the [Mechanism and Catalytic Site Atlas](https://www.ebi.ac.uk/thornton-srv/m-csa/)
+  (CC BY 4.0). `data/mcsa/` ships the chains and enzyme lists used in the paper.
 
-A single entrypoint, `train_bioblobs.py`, runs all three model variants by
-toggling the partitioner / decoder via Hydra overrides.
+Each source keeps its own terms of use.
 
-### BioBlobs (default — partitioner + MIL decoder)
+## Citation
 
-```bash
-python train_bioblobs.py
+```bibtex
+@inproceedings{wang2026bioblobs,
+  title     = {Unsupervised discovery of Functional Substructures},
+  author    = {Wang, Xin and Shi, Kaiwen and Oliver, Carlos},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2026}
+}
 ```
 
-This uses `conf/train_bioblobs.yaml`, which selects:
+## License
 
-* `encoders=esm2_static`   (frozen ESM2-150M residue embeddings, mmap-cached)
-* `partitioners=bioblobs`  (differentiable blob partitioner)
-* `decoders=mil`           (attention-based MIL pooling + classification)
-* `datasets=ec`, `tasks=multi-class`
-
-Useful BioBlobs partitioner overrides (defaults in
-`conf/partitioners/bioblobs.yaml`):
-
-```bash
-python train_bioblobs.py \
-  partitioners.num_blobs_per_protein=5 \
-  partitioners.seed_radius=12.0 \
-  partitioners.proximity_bias=0.5 \
-  partitioners.membership_hoyer=0.1
-```
-
-#### Swept hyperparameters
-
-The four hyperparameters swept in the paper:
-
-| Override | Symbol | Default | Where | What it controls |
-| --- | --- | --- | --- | --- |
-| `partitioners.num_blobs_per_protein` | `K` | `5` | `conf/partitioners/bioblobs.yaml` | Fixed blob-proposal budget per protein. Each protein is partitioned into exactly `K` (possibly empty) blobs, which the MIL decoder weighs and aggregates. Larger `K` lets the model recover finer-grained substructures at the cost of more padded/empty slots and a wider MIL head. |
-| `partitioners.seed_radius` | `r` (Å) | `12.0` | `conf/partitioners/bioblobs.yaml` | Spatial radius (Å) of the locality window used when assigning residues to a blob seed. Smaller `r` produces tighter, more locally compact blobs; larger `r` allows blobs to span longer-range structural motifs. |
-| `partitioners.membership_hoyer` | `λ_H` | `0.1` | `conf/partitioners/bioblobs.yaml` | Weight of the Hoyer-Square (HS) sparsity regularizer applied to the soft residue→blob membership matrix. `0` disables the term; larger values push each residue's `K`-way membership toward a one-hot assignment, yielding sharper, more disjoint blobs. |
-| `decoders.use_blob_interaction` | — | `false` | `conf/decoders/mil.yaml` | If `true`, run a single self-attention layer across the `K` blobs before the MIL attention gate. Each blob attends to every other blob, and a `[B, K, K]` correlation matrix is exposed in the model's `extra` output for interpretability. |
-
-Sweep example:
-
-```bash
-# K   ∈ {3, 5, 8, 12}
-# r   ∈ {8.0, 12.0, 16.0}
-# λ_H ∈ {0.0, 1e-4, 1e-3, 1e-2}
-# use_blob_interaction ∈ {false, true}
-python train_bioblobs.py \
-  partitioners.num_blobs_per_protein=8 \
-  partitioners.seed_radius=16.0 \
-  partitioners.membership_hoyer=1e-3 \
-  decoders.use_blob_interaction=true
-```
-
-### Encoder swap
-
-The default encoder is ESM2-150M (`facebook/esm2_t30_150M_UR50D`).
-SaProt-650M is also supported and reads from the same direct-to-mmap PLM
-cache:
-
-```bash
-python train_bioblobs.py encoders=saprot_static
-```
-
-Build the cache with `preprocessing/prepare_plm_cache.py` (see below)
-before the first training run.
-
-### Other handy overrides
-
-```bash
-python train_bioblobs.py \
-  datasets=pfam \
-  training.batch_size=128 \
-  training.epochs=100 \
-  training.num_workers=8 \
-  wandb.use_wandb=true wandb.job_name=bioblobs_pfam
-```
-
-## Preprocessing
-
-Two dataset families are wired in. Each has its own staging script (download
-+ PDB parsing) and a shared direct-to-mmap PLM embedding-cache builder:
-
-| Dataset family | Stage script | PLM cache script | Output root |
-| --- | --- | --- | --- |
-| ProteinShake — EC | _auto, on first `train_bioblobs.py` run_ | `preprocessing/prepare_plm_cache.py datasets=ec` | `<data_dir>/ec_proteinshake/<split>/` |
-| ProteinShake — GO | _auto_ | `preprocessing/prepare_plm_cache.py datasets=go` | `<data_dir>/go_proteinshake/<split>/` |
-| ProteinShake — Pfam | _auto_ | `preprocessing/prepare_plm_cache.py datasets=pfam` | `<data_dir>/pfam_proteinshake/<split>/` |
-| VenusX — site / fragment | `preprocessing/prepare_venusx_site_fragment.py datasets.target=<T> datasets.split_strategy=<S>` | `preprocessing/prepare_venusx_plm_cache.py datasets.target=<T>` | `<data_dir>/venusx_site_fragment/<T>/<S>/` |
-
-PLM encoders supported by both cache scripts: `encoders=esm2_static`
-(ESM2-150M, default) and `encoders=saprot_static` (SaProt-650M, requires a
-local Foldseek binary). Add `encoders.precompute_device=cuda` to embed on
-GPU. Each cache writes a single `embeddings.bin` + `meta.pt`; no
-per-protein `.pt` intermediates.
-
-VenusX fields:
-
-| Field | Allowed values |
-| --- | --- |
-| `datasets.target`         | `Act`, `BindI`, `Evo`, `Motif`, `Dom` |
-| `datasets.split_strategy` | `MF50`, `MF70`, `MF90` |
-
-### ProteinShake PLM cache
-
-For static ESM2 / SaProt residue embeddings on EC / GO / Pfam, build a single
-direct-to-mmap cache (`embeddings.bin` + `meta.pt`) per (dataset × encoder)
-pair before training:
-
-```bash
-python preprocessing/prepare_plm_cache.py \
-  datasets=ec \
-  encoders=esm2_static \
-  encoders.precompute_device=cuda
-```
-
-The cache lives next to the prepared dataset under
-`<data_dir>/<dataset>_proteinshake/<split>/{esm2_static_cache_mmap,saprot_static_cache_mmap}/`.
-
-### VenusX (residue-level fragment classification)
-
-VenusX is a fragment-classification benchmark hosted on HuggingFace
-(`AI4Protein/VenusX_Res_<target>_<split_strategy>` and
-`AI4Protein/VenusX_<target>_AlphaFold2_PDB`). Two preprocessing steps:
-
-**1. Download + stage the dataset.** Pulls the HF parquet + PDB archive,
-parses each PDB through the same backbone-completion checks used for
-ProteinShake, and writes per-split CSVs under
-`<data_dir>/venusx_site_fragment/<target>/<split_strategy>/`:
-
-```bash
-python preprocessing/prepare_venusx_site_fragment.py \
-  datasets.target=Act \
-  datasets.split_strategy=MF50
-```
-
-(See the table above for allowed `target` × `split_strategy` values.)
-
-**2. Build the PLM mmap cache for that target.** Unions train+val+test,
-dedupes by `protein_uid`, and writes one `embeddings.bin` + `meta.pt` next
-to the staged target. Default encoder is ESM2; override
-`encoders=saprot_static` for SaProt-650M:
-
-```bash
-python preprocessing/prepare_venusx_plm_cache.py \
-  datasets.target=Act \
-  encoders=esm2_static \
-  encoders.precompute_device=cuda
-```
-
-After both steps the directory layout is:
-
-```
-<data_dir>/venusx_site_fragment/<target>/<split_strategy>/
-├── pdb/
-├── train_split.csv  val_split.csv  test_split.csv
-├── samples.jsonl  metadata.json
-└── esm2_static_cache_mmap/   # (or saprot_static_cache_mmap/)
-    ├── embeddings.bin
-    └── meta.pt
-```
-
-Train on a prepared VenusX target via the same `train_bioblobs.py`:
-
-```bash
-python train_bioblobs.py \
-  datasets=venusx_site_fragment \
-  datasets.target=Act \
-  datasets.split_strategy=MF50 \
-  tasks=venusx_fragment_multiclass \
-  encoders=esm2_static
-```
-
-## Inference + blob interpretability
-
-`inference.py` loads a trained checkpoint and scores user-provided PDB files,
-optionally exporting per-protein blob assignments and a standalone 3D HTML
-viewer for inspection.
-
-```bash
-# Score one or more PDBs and write predictions + blob JSON + 3D viewer
-python inference.py \
-  --checkpoint outputs/<run>/best.ckpt \
-  --out-dir    outputs/<run>/inference \
-  --pdb        my_protein.pdb \
-  --interpret --save-html
-```
-
-See [INFERENCE.md](INFERENCE.md) for the full CLI, output schema, and notes
-on running batches over a directory of PDBs.
-
+MIT, see [LICENSE](LICENSE). The third-party models wrapped in `baselines/mcsa/` keep their own
+licenses.
