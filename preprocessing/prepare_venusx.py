@@ -18,6 +18,8 @@ The residue-embedding caches (``esm2_static_cache_mmap``, ``saprot_static_cache_
 separately by ``preprocessing/prepare_plm_cache.py`` once this has run.
 
 Already-complete output is left untouched unless ``--force`` is passed (no network access then).
+If only the geometry cache is missing (for example after unpacking the BioBlobs data bundle), it
+is rebuilt from the staged PDBs, again without network access.
 
 Usage:
     .venv/bin/python -B preprocessing/prepare_venusx.py --target Act --split-strategy MF50 \\
@@ -327,6 +329,11 @@ def prepare(args: argparse.Namespace) -> Path:
 
     if not args.force and _is_prepared(root, source_repo_id, pdb_repo_id):
         logger.info("VenusX {}/{} already prepared at {}", args.target, args.split_strategy, root)
+        tag = str(args.min_backbone_completion).replace(".", "p")
+        if not (root / "cache" / f"uid_structures_min_completion_{tag}.pt").exists():
+            samples = pd.read_csv(root / "samples.csv", usecols=["protein_uid"])
+            uids = sorted(samples["protein_uid"].astype(str).unique())
+            build_geometry_cache(root, uids, args.min_backbone_completion, args.num_workers)
         return root
 
     logger.warning("Preparing VenusX {}/{} at {}", args.target, args.split_strategy, root)
