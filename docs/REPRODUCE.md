@@ -76,10 +76,10 @@ Use `tasks=multi_label selection.metric=fmax` for GO-MF and `tasks=multi_class` 
 ProteinShake tasks. Table 1 reports Fmax for GO-MF and macro-F1 for the other tasks. The BioBlobs
 experiment files already set these.
 
-**Hyperparameters.** The ESM2-T30 files in `conf/experiment/proteinshake/` hold the settings behind
-the printed Table 1 cells. The SaProt-650M files hold the settings selected on validation from the
-grid in the appendix. The comparators were tuned per cell on validation, with the search spaces
-listed in the appendix. The config defaults are not those tuned values. For each cell, set
+**Hyperparameters.** The ESM2-T30 and SaProt-650M files in `conf/experiment/proteinshake/` hold the
+settings behind the printed Table 1 cells, from the search grids in the appendix. The comparators
+were tuned per cell on validation, with the search spaces listed in the appendix. The config
+defaults are not those tuned values. For each cell, set
 `training.lr`, `training.batch_size`, `training.epochs` and the comparator's own parameters
 (`encoders.gnn.num_layers` and `encoders.gnn.dropout` for the GNNs, `partitioners.max_clusters` for
 DiffPool, `partitioners.ratio` for TopK and SAGPool) to the selected values. The EC and SCOP-FAM
