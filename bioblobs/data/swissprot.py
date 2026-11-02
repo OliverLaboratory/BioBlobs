@@ -10,8 +10,9 @@ those prepared artifacts.
 Prepared dataset directory (``dataset_root``)::
 
     <data_dir>/<dataset_name>/cache/structures.pt        structure dicts (name, seq, coords, resnum)
-    <data_dir>/<dataset_name>/train_split_train.csv      id, label (+ seq, ec_number, ...)
-    <data_dir>/<dataset_name>/train_split_val.csv        id, label
+    <data_dir>/<dataset_name>/{train,val}_ids.txt        shipped: the split used for the paper
+    <data_dir>/<dataset_name>/train_split.csv            id, label of every protein
+    <data_dir>/<dataset_name>/train_split_{train,val}.csv  split CSVs (used when no id lists)
     <data_dir>/<dataset_name>/token_map.json             {"a.b.c": class_index}
     <data_dir>/<dataset_name>/class_priors.json          {"N", "counts", "priors"}
     <data_dir>/<dataset_name>/esm2_static_cache_mmap/    residue embedding cache (built separately)
@@ -84,6 +85,25 @@ def _split_csv(ds_cfg: Any, root: Path, split: str) -> Path:
     raise ValueError(f"Unknown split {split!r}; expected 'train' or 'val'")
 
 
+def _split_labels(ds_cfg: Any, root: Path, split: str) -> tuple[dict[str, int], Path]:
+    """Ordered ``{id: label}`` of one split.
+
+    The shipped id lists (``<root>/{train,val}_ids.txt``, the split used for the paper) take
+    precedence; labels then come from ``train_split.csv``. Without them, the split CSVs written
+    by ``build_val_split.py`` are read.
+    """
+    ids_file = root / f"{split}_ids.txt"
+    if ids_file.exists() and not (split == "train" and _get(ds_cfg, "train_csv", None)):
+        ids = [line.strip() for line in ids_file.read_text().splitlines()]
+        ids = [i for i in ids if i and not i.startswith("#")]
+        df = pd.read_csv(root / "train_split.csv", usecols=["id", "label"])
+        labels = dict(zip(df["id"].astype(str), df["label"].astype(int), strict=True))
+        return {i: labels[i] for i in ids}, ids_file
+    csv_path = _split_csv(ds_cfg, root, split)
+    df = pd.read_csv(csv_path, usecols=["id", "label"])
+    return dict(zip(df["id"].astype(str), df["label"].astype(int), strict=True)), csv_path
+
+
 def load_split(cfg: Any, split: str) -> tuple[list[Structure], int]:
     """Load one split's structures with labels attached.
 
@@ -115,9 +135,7 @@ def load_split(cfg: Any, split: str) -> tuple[list[Structure], int]:
     raw = torch.load(structures_pt, weights_only=False, mmap=True)
     by_name = {s["name"]: s for s in raw}
 
-    csv_path = _split_csv(ds_cfg, root, split)
-    df = pd.read_csv(csv_path, usecols=["id", "label"])
-    id_to_label = dict(zip(df["id"].astype(str), df["label"].astype(int), strict=True))
+    id_to_label, csv_path = _split_labels(ds_cfg, root, split)
 
     structures: list[Structure] = []
     missing = 0

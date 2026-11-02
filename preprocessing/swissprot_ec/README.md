@@ -43,8 +43,14 @@ by this release; supply your own CSV with these columns.
 ## Note on structure parsing
 
 Structures were parsed with a different PDB parser for the paper; re-running this script from the
-raw PDB files may differ in rare residues (e.g. alternate locations). The released split files are
-the ones used for the paper.
+raw PDB files may differ in rare residues (e.g. alternate locations).
+
+## Training and validation ids used for the paper
+
+`data/swissprot_ec/train_ids.txt` (198,222 proteins) and `val_ids.txt` (11,012) ship with the
+repository and hold the training and validation ids used for the paper. When they are present in
+the dataset directory, `bioblobs.data.swissprot` uses them (with labels from `train_split.csv`)
+instead of the split CSVs, so `build_val_split.py` is only needed to make a new split.
 
 ## What this does not do
 
