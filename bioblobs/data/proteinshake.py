@@ -194,6 +194,7 @@ def load_split(cfg: DictConfig, split: str) -> tuple[list[Structure], int]:
         ]
         structures = load_structures(tasks, int(ds.get("num_workers", 4)), desc=split)
         if not ds.get("test_mode", False):
+            cache.parent.mkdir(parents=True, exist_ok=True)  # absent in an unpacked data bundle
             torch.save(structures, cache)
 
     if ds.dataset_name == "ec":
