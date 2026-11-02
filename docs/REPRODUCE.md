@@ -37,7 +37,8 @@ python preprocessing/prepare_plm_cache.py \
 CSV with `id`, `seq` and `ec_number`. [preprocessing/swissprot_ec/README.md](../preprocessing/swissprot_ec/README.md)
 describes how to attach AlphaFold DB v6 structures and build the labels.
 `data/swissprot_ec/` ships the training and validation ids used for the paper, split at 30% sequence
-identity with MMseqs2. Then build the ESM2 cache:
+identity with MMseqs2 (copy the two id files along if you move `datasets.data_dir`). Then build the
+ESM2 cache:
 
 ```bash
 python preprocessing/prepare_plm_cache.py --structures data/swissprot_ec/cache/structures.pt \
