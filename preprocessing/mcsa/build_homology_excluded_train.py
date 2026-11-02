@@ -14,6 +14,8 @@ cluster differently.
 Outputs:
     <out-csv>                        filtered train rows (same columns as --train-csv)
     <workdir>/clusters_30.tsv        raw MMseqs2 cluster assignments (rep, member)
+    <workdir>/heldout_ids.txt        representative of each cluster with M-CSA chains but no
+                                     training protein (the M-CSA held-out ids)
     <workdir>/homology_exclusion_report.json
 
 Usage::
@@ -101,6 +103,40 @@ def write_fasta(path: Path, id_to_seq: dict[str, str]) -> None:
             fh.write(f">{name}\n{seq}\n")
 
 
+def select_from_clusters(cl: pd.DataFrame) -> dict:
+    """Training proteins to remove and M-CSA chains held out, from MMseqs2 cluster assignments.
+
+    Args:
+        cl: One row per sequence with columns ``rep`` (cluster representative) and
+            ``member``. M-CSA chains are named ``MCSA__<pdb_id>_<chain>``.
+
+    Returns:
+        ``n_clusters``, ``n_contaminated_clusters`` (clusters holding an M-CSA chain),
+        ``train_removed`` (training ids in those clusters) and ``heldout`` (the sorted
+        representative ids, without the prefix, of the clusters that hold M-CSA chains but
+        no training protein).
+    """
+    clusters: dict[str, list[str]] = {}
+    for rep, member in zip(cl["rep"], cl["member"], strict=True):
+        clusters.setdefault(rep, []).append(member)
+    train_removed: set[str] = set()
+    n_contaminated = 0
+    heldout = []
+    for rep, members in clusters.items():
+        train = [m for m in members if not m.startswith("MCSA__")]
+        if len(train) < len(members):
+            n_contaminated += 1
+            train_removed.update(train)
+            if not train:
+                heldout.append(rep.removeprefix("MCSA__"))
+    return {
+        "n_clusters": len(clusters),
+        "n_contaminated_clusters": n_contaminated,
+        "train_removed": train_removed,
+        "heldout": sorted(heldout),
+    }
+
+
 def main() -> None:
     args = parse_args()
     args.workdir.mkdir(parents=True, exist_ok=True)
@@ -138,21 +174,21 @@ def main() -> None:
 
     cluster_tsv = Path(f"{prefix}_cluster.tsv")
     cl = pd.read_csv(cluster_tsv, sep="\t", header=None, names=["rep", "member"])
-    clusters: dict[str, list[str]] = {}
-    for rep, member in zip(cl["rep"], cl["member"], strict=True):
-        clusters.setdefault(rep, []).append(member)
-
-    contaminated_train_ids: set[str] = set()
-    n_contaminated_clusters = 0
-    for members in clusters.values():
-        if any(m.startswith("MCSA__") for m in members):
-            n_contaminated_clusters += 1
-            contaminated_train_ids.update(m for m in members if not m.startswith("MCSA__"))
+    selected = select_from_clusters(cl)
+    contaminated_train_ids = selected["train_removed"]
 
     keep = df[~df["id"].astype(str).isin(contaminated_train_ids)].copy()
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     keep.to_csv(args.out_csv, index=False)
     cl.to_csv(args.workdir / "clusters_30.tsv", sep="\t", index=False)
+    header = (
+        "# M-CSA held-out ids: the representative of each MMseqs2 cluster that holds M-CSA\n"
+        "# chains but no training protein. Written by build_homology_excluded_train.py with\n"
+        f"# --min-seq-id {args.min_seq_id} -c {args.coverage} --cov-mode {args.cov_mode}.\n"
+    )
+    (args.workdir / "heldout_ids.txt").write_text(
+        header + "".join(f"{i}\n" for i in selected["heldout"])
+    )
 
     report = {
         "min_seq_id": args.min_seq_id,
@@ -160,11 +196,12 @@ def main() -> None:
         "cov_mode": args.cov_mode,
         "n_train_in": len(df),
         "n_mcsa_seqs": len(mcsa),
-        "n_clusters": len(clusters),
-        "n_contaminated_clusters": n_contaminated_clusters,
+        "n_clusters": selected["n_clusters"],
+        "n_contaminated_clusters": selected["n_contaminated_clusters"],
         "n_train_removed": len(contaminated_train_ids),
         "n_train_kept": len(keep),
         "frac_removed": len(contaminated_train_ids) / max(1, len(df)),
+        "n_heldout": len(selected["heldout"]),
     }
     with (args.workdir / "homology_exclusion_report.json").open("w") as fh:
         json.dump(report, fh, indent=2)
