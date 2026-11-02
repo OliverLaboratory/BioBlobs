@@ -21,7 +21,7 @@ class AnyMetricEarlyStopping(pl.Callback):
     """Stop when none of several validation metrics improved for ``patience`` epochs.
 
     Args:
-        monitors: Metric names (maximized).
+        monitors: Metric names; losses (names ending in ``loss``) are minimized, others maximized.
         patience: Epochs without improvement in any monitored metric before stopping.
     """
 
@@ -37,8 +37,11 @@ class AnyMetricEarlyStopping(pl.Callback):
         improved = False
         for name in self.monitors:
             value = trainer.callback_metrics.get(name)
-            if value is not None and float(value) > self.best[name]:
-                self.best[name] = float(value)
+            if value is None:
+                continue
+            signed = -float(value) if name.endswith("loss") else float(value)
+            if signed > self.best[name]:
+                self.best[name] = signed
                 improved = True
         self.wait = 0 if improved else self.wait + 1
         if self.wait >= self.patience:

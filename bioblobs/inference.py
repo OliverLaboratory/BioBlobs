@@ -16,7 +16,7 @@ from typing import Any
 
 import torch
 from loguru import logger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 from torch_geometric.data import Batch, Data
 
 from bioblobs.data.structure import parse_backbone, to_graph
@@ -49,7 +49,8 @@ def load_pretrained(path: str | Path, device: str = "cpu") -> tuple[BioBlobs, Di
 
         module = load_module(path)
         model, cfg, classes = module.model, module.cfg, None
-        cfg.num_classes = module.num_classes
+        with open_dict(cfg):
+            cfg.num_classes = module.num_classes
     if classes is None:
         classes = list(range(int(cfg.num_classes)))
     elif isinstance(classes, dict):
