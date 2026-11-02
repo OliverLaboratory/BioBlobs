@@ -6,6 +6,7 @@ import random
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
+import torch
 from loguru import logger
 from torch.utils.data import Dataset, Sampler
 from torch_geometric.data import Data
@@ -130,7 +131,11 @@ def make_loader(
     Returns:
         A ``torch_geometric`` DataLoader.
     """
-    kwargs = {"num_workers": num_workers, "pin_memory": True, "persistent_workers": num_workers > 0}
+    kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": torch.cuda.is_available(),
+        "persistent_workers": num_workers > 0,
+    }
     if num_workers > 0:
         kwargs["prefetch_factor"] = 4
     if bucket_by_size:

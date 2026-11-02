@@ -149,10 +149,61 @@ class NeuralBlobPartitioner(nn.Module):
             assignments.append(hard + (soft - soft.detach()))
         return torch.stack(assignments, dim=1), seed_indices, seed_valid
 
+    def expand_blobs(
+        self,
+        residue_embeddings: torch.Tensor,
+        coords: torch.Tensor,
+        residue_mask: torch.Tensor,
+        seed_embeddings: torch.Tensor,
+        seed_indices: torch.Tensor,
+        seed_valid: torch.Tensor,
+        tau: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Blob expansion: soft membership of candidate residues around each seed.
+
+        Candidates lie within ``seed_radius`` of the seed (Eq. candidate). The membership logit
+        adds the scaled seed-residue attention score and the proximity bias (Eq. attn_prox);
+        ``m_ki = sigmoid(logit / tau)`` (Eq. membership), with the seed clamped to 1.
+
+        Args:
+            residue_embeddings: Residue embeddings, ``[B, N, D]``.
+            coords: C-alpha coordinates, ``[B, N, 3]``.
+            residue_mask: Valid residues, ``[B, N]``.
+            seed_embeddings: Embeddings of the selected seeds, ``[B, K, D]``.
+            seed_indices: Seed residue indices (``-1`` for empty slots), ``[B, K]``.
+            seed_valid: Seed validity, ``[B, K]``.
+            tau: Membership temperature.
+
+        Returns:
+            Memberships ``[B, K, N]`` and candidate sets ``[B, K, N]``.
+        """
+        batch_size, num_res, _ = residue_embeddings.shape
+        safe_indices = seed_indices.clamp_min(0)
+        batch_idx = torch.arange(batch_size, device=coords.device).unsqueeze(-1)
+        # Empty seed slots carry index -1 (clamped to 0); reading their coordinates from the
+        # masked tensor keeps a missing C-alpha at residue 0 from turning them into NaN.
+        masked_coords = torch.where(residue_mask.unsqueeze(-1), coords, torch.zeros_like(coords))
+        seed_coords = masked_coords[batch_idx, safe_indices] * seed_valid.unsqueeze(-1)
+
+        queries = self.query_norm(self.seed_query(seed_embeddings))
+        keys = self.key_norm(self.residue_key(residue_embeddings))
+        attention = torch.einsum("bkh,bnh->bkn", queries, keys) / math.sqrt(float(self.attn_dim))
+        distances = torch.cdist(seed_coords, masked_coords, compute_mode="use_mm_for_euclid_dist")
+        is_seed = F.one_hot(safe_indices, num_classes=num_res).to(torch.bool)
+        is_seed = is_seed & seed_valid.unsqueeze(-1)
+        candidate_mask = (
+            residue_mask.unsqueeze(1) & seed_valid.unsqueeze(-1) & (distances <= self.seed_radius)
+        ) | is_seed
+        proximity = (1.0 - distances / max(float(self.seed_radius), self.eps)).clamp_min(0.0)
+        logits = attention + self.proximity_bias * proximity
+        memberships = torch.sigmoid(logits / max(tau, 1e-6)) * candidate_mask.float()
+        memberships = torch.where(is_seed, torch.ones_like(memberships), memberships)
+        return memberships * residue_mask.unsqueeze(1).float(), candidate_mask
+
     def forward(
         self, residue_embeddings: torch.Tensor, coords: torch.Tensor, residue_mask: torch.Tensor
     ) -> Partition:
-        """Partition a padded batch.
+        """Partition a padded batch: seed selection, then blob expansion.
 
         Args:
             residue_embeddings: Residue embeddings Z, ``[B, N, D]``.
@@ -163,36 +214,21 @@ class NeuralBlobPartitioner(nn.Module):
         Returns:
             The partition, with memberships ``[B, K, N]``.
         """
-        batch_size, num_res, _ = residue_embeddings.shape
         tau_seed, tau_mem = self.temperatures()
         seed_logits = self.seed_scorer(residue_embeddings).squeeze(-1)
         seed_onehot, seed_indices, seed_valid = self.select_seeds(
             seed_logits, residue_mask, tau_seed
         )
-        safe_indices = seed_indices.clamp_min(0)
-        batch_idx = torch.arange(batch_size, device=coords.device).unsqueeze(-1)
         seed_embeddings = torch.einsum("bkn,bnd->bkd", seed_onehot, residue_embeddings)
-        # Empty seed slots carry index -1 (clamped to 0); reading their coordinates from the
-        # masked tensor keeps a missing C-alpha at residue 0 from turning them into NaN.
-        masked_coords = torch.where(residue_mask.unsqueeze(-1), coords, torch.zeros_like(coords))
-        seed_coords = masked_coords[batch_idx, safe_indices] * seed_valid.unsqueeze(-1)
-
-        queries = self.query_norm(self.seed_query(seed_embeddings))
-        keys = self.key_norm(self.residue_key(residue_embeddings))
-        attention = torch.einsum("bkh,bnh->bkn", queries, keys) / math.sqrt(float(self.attn_dim))
-        distances = torch.cdist(seed_coords, masked_coords, compute_mode="use_mm_for_euclid_dist")
-        seed_onehot_mask = F.one_hot(safe_indices, num_classes=num_res).to(
-            torch.bool
-        ) & seed_valid.unsqueeze(-1)
-        candidate_mask = (
-            residue_mask.unsqueeze(1) & seed_valid.unsqueeze(-1) & (distances <= self.seed_radius)
-        ) | seed_onehot_mask
-        proximity = (1.0 - distances / max(float(self.seed_radius), self.eps)).clamp_min(0.0)
-        logits = attention + self.proximity_bias * proximity
-        memberships = torch.sigmoid(logits / max(tau_mem, 1e-6)) * candidate_mask.float()
-        memberships = torch.where(seed_onehot_mask, torch.ones_like(memberships), memberships)
-        memberships = memberships * residue_mask.unsqueeze(1).float()
-
+        memberships, candidate_mask = self.expand_blobs(
+            residue_embeddings,
+            coords,
+            residue_mask,
+            seed_embeddings,
+            seed_indices,
+            seed_valid,
+            tau_mem,
+        )
         return Partition(
             memberships=memberships,
             blob_mask=seed_valid,
