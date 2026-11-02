@@ -1,5 +1,5 @@
 # @package _global_
-# Table 1: BioBlobs on scop_fam (sequence split) with ESM2-T30.
+# Reproduces the printed Table 1 cell: BioBlobs on scop_fam (sequence split) with ESM2-T30.
 defaults:
   - override /datasets: scop_fam
   - override /encoders: esm2_static
