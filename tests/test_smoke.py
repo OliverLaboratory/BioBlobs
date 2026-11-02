@@ -16,11 +16,16 @@ from bioblobs.training.metrics import fmax, multiclass_metrics
 NUM_CLASSES = 5
 
 
-def synthetic_batch(dim: int = 640, multi_label: bool = False, seed: int = 0) -> Batch:
+def synthetic_batch(
+    dim: int = 640,
+    multi_label: bool = False,
+    seed: int = 0,
+    sizes: tuple[int, int, int] = (30, 45, 6),
+) -> Batch:
     """Three small proteins with random embeddings, C-alpha traces and site labels."""
     g = torch.Generator().manual_seed(seed)
     items = []
-    for i, n in enumerate((30, 45, 6)):
+    for i, n in enumerate(sizes):
         x = torch.cumsum(torch.randn(n, 3, generator=g) * 2.0, dim=0)
         mask = torch.ones(n, dtype=torch.bool)
         mask[0] = i != 1  # one protein lacks the C-alpha of residue 0
@@ -57,6 +62,8 @@ CASES = [
     ("+experiment=proteinshake/ec_sequence_esm2",),
     ("+experiment=proteinshake/scop_fam_sequence_esm2",),
     ("+experiment=proteinshake/go_mf_sequence_esm2",),
+    ("+experiment=proteinshake/ec_sequence_saprot",),
+    ("+experiment=proteinshake/go_mf_structure_saprot",),
     ("+experiment=venusx/act_esm2_seedalign",),
     ("+experiment=venusx/act_saprot_labelfree",),
     ("+experiment=mcsa/rvq_k8", "codebooks.warmup_epochs=0", "codebooks.num_codes=8"),
@@ -105,6 +112,21 @@ def test_partition_properties() -> None:
     assert torch.equal(scores[part.residue_mask].clamp(0, 1), scores[part.residue_mask])
     weighted = weighted_membership(part.memberships, out.importance)
     assert weighted.shape == scores.shape
+
+
+def test_empty_seed_slots_stay_finite() -> None:
+    """Fewer valid residues than K and no C-alpha at residue 0 leave empty seed slots."""
+    cfg = config("+experiment=proteinshake/go_mf_structure_saprot")
+    torch.manual_seed(0)
+    module = BioBlobsModule(cfg, NUM_CLASSES).train()
+    batch = synthetic_batch(cfg.encoders.output_dim, multi_label=True, sizes=(40, 28, 6))
+    out = module(batch)
+    assert int(out.partition.blob_mask[1].sum()) == 27 < cfg.partitioners.num_blobs
+    loss, terms = module.loss(batch, out)
+    assert torch.isfinite(loss) and all(torch.isfinite(v) for v in terms.values())
+    loss.backward()
+    grads = [p.grad for p in module.parameters() if p.requires_grad and p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
 
 
 def test_metrics() -> None:

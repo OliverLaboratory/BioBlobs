@@ -1,0 +1,33 @@
+# @package _global_
+# Validation-selected SaProt-650M setting behind Table 1: BioBlobs on scop_fam (structure split).
+# lambda_H (objective.hoyer_weight) and blob self-attention (decoders.use_blob_interaction)
+# were chosen by the mean best validation score over seeds 0-2.
+defaults:
+  - override /datasets: scop_fam
+  - override /encoders: saprot_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /tasks: multi_class
+  - override /training: proteinshake
+
+name: proteinshake/scop_fam_structure_saprot
+datasets:
+  split: structure
+partitioners:
+  num_blobs: 32
+  seed_radius: 20.0
+  proximity_bias: 0.5
+decoders:
+  use_blob_interaction: true
+training:
+  lr: 0.001
+  weight_decay: 0.0
+  batch_size: 128
+  epochs: 100
+  warmup_epochs: 5
+objective:
+  hoyer_weight: 0.03
+selection:
+  metric: macro_f1
+  patience: 15
+  min_delta: 0.0
