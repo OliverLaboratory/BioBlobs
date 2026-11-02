@@ -35,13 +35,21 @@ python preprocessing/prepare_plm_cache.py \
 
 **Swiss-Prot EC (the M-CSA model's training data)**: the input is the EC-Bench training set, a
 CSV with `id`, `seq` and `ec_number`. [preprocessing/swissprot_ec/README.md](../preprocessing/swissprot_ec/README.md)
-describes how to attach AlphaFold DB v6 structures, build the labels and split off a validation
-set at 30% sequence identity with MMseqs2. Then build the ESM2 cache with
-`prepare_plm_cache.py`.
+describes how to attach AlphaFold DB v6 structures and build the labels.
+`data/swissprot_ec/` ships the training and validation ids used for the paper, split at 30% sequence
+identity with MMseqs2. Then build the ESM2 cache:
+
+```bash
+python preprocessing/prepare_plm_cache.py --structures data/swissprot_ec/cache/structures.pt \
+    --encoder esm2_static --max-len 1500 --out data/swissprot_ec/esm2_static_cache_mmap
+```
+
+The cache admits proteins up to 1,500 residues, and training keeps those up to 1,000
+(`datasets.max_len`).
 
 **M-CSA**: `data/mcsa/` ships the chain chosen for each entry, its catalytic residues, the 79
 enzymes held out from training and the 74 evaluated in the paper. Build the embedding file with
-`python preprocessing/mcsa/build_features.py --labels data/mcsa/mcsa_single_chain.json --pdb-dir <pdbs> --out data/mcsa/features.pt`.
+`python preprocessing/mcsa/build_features.py --labels data/mcsa/mcsa_single_chain.json --pdb-dir <pdbs> --max-len 1022 --out data/mcsa/features.pt`.
 
 ## 2. Commands for each result
 
@@ -63,13 +71,19 @@ python train_bioblobs.py -m +experiment=proteinshake/ec_sequence_esm2 training.s
 | Tables 2, 10 and 11, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
 | Figure 3 and Tables 8 and 9, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
 
-Use `multi_label` for GO-MF and `multi_class` for the other ProteinShake tasks. Table 1's GO-MF
-metric is Fmax, and the other tasks report macro-F1.
+Use `tasks=multi_label selection.metric=fmax` for GO-MF and `tasks=multi_class` for the other
+ProteinShake tasks. Table 1 reports Fmax for GO-MF and macro-F1 for the other tasks. The BioBlobs
+experiment files already set these.
 
 **Hyperparameters.** The ESM2-T30 files in `conf/experiment/proteinshake/` hold the settings behind
 the printed Table 1 cells. The SaProt-650M files hold the settings selected on validation from the
 grid in the appendix. The comparators were tuned per cell on validation, with the search spaces
-listed in the appendix. Figure 2 and the appendix grids vary `partitioners.num_blobs` (K),
+listed in the appendix. The config defaults are not those tuned values. For each cell, set
+`training.lr`, `training.batch_size`, `training.epochs` and the comparator's own parameters
+(`encoders.gnn.num_layers` and `encoders.gnn.dropout` for the GNNs, `partitioners.max_clusters` for
+DiffPool, `partitioners.ratio` for TopK and SAGPool) to the selected values. The EC and SCOP-FAM
+comparators trained at batch size 32 for up to 100 epochs, and the Pfam, GO-MF and SCOP-SF
+comparators at batch size 16 for up to 60 epochs. Figure 2 and the appendix grids vary `partitioners.num_blobs` (K),
 `partitioners.seed_radius` (r) and `objective.hoyer_weight` (λ_H) on top of an experiment config.
 
 **VenusX baselines** (Tables 2, 10 and 11). Train mean or attention pooling with
@@ -105,6 +119,7 @@ This reproduces the BioBlobs row of Table 9. The third-party baselines
 | Table 1, BioBlobs with ESM2-T30 | 1× NVIDIA H100 80 GB | 7–27 min for EC, Pfam and SCOP, about 1 h for GO-MF |
 | Table 1, BioBlobs with SaProt-650M | 1× NVIDIA RTX 5090 | up to about 1 h, and up to a few hours for GO-MF |
 | Table 1, mean and attention pooling | 1× H100 or RTX 5090 | 3–46 min, longest for GO-MF |
+| Table 1, GCN, GIN, GAT, DiffPool, TopK and SAGPool | 1× H200 or H100 | not recorded |
 | VenusX, BioBlobs | 1× RTX 5090 or H100 | 3–58 min, longest for Evo |
 | M-CSA model | 1 GPU | about 70 s per epoch, 100 epochs |
 | M-CSA evaluation | CPU | minutes |
