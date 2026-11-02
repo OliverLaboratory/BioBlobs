@@ -1,7 +1,5 @@
 # @package _global_
-# Validation-selected SaProt-650M setting behind Table 1: BioBlobs on scop_fam (structure split).
-# lambda_H (objective.hoyer_weight) and blob self-attention (decoders.use_blob_interaction)
-# were chosen by the mean best validation score over seeds 0-2.
+# Reproduces the printed Table 1 cell: BioBlobs with SaProt-650M on scop_fam (structure split).
 defaults:
   - override /datasets: scop_fam
   - override /encoders: saprot_static

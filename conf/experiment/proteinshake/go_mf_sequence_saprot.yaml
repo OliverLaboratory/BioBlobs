@@ -1,7 +1,5 @@
 # @package _global_
-# Validation-selected SaProt-650M setting behind Table 1: BioBlobs on go_mf (sequence split).
-# lambda_H (objective.hoyer_weight) and blob self-attention (decoders.use_blob_interaction)
-# were chosen by the mean best validation score over seeds 0-2.
+# Reproduces the printed Table 1 cell: BioBlobs with SaProt-650M on go_mf (sequence split).
 defaults:
   - override /datasets: go_mf
   - override /encoders: saprot_static
