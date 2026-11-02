@@ -12,7 +12,7 @@ import torch.nn as nn
 KNOWN_DIMS = {
     "facebook/esm2_t30_150M_UR50D": 640,
     "facebook/esm2_t33_650M_UR50D": 1280,
-    "westlake-repl/SaProt_650M_AF2": 1280,
+    "westlake-repl/SaProt_650M_PDB": 1280,
 }
 
 

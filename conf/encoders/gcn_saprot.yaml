@@ -1,5 +1,5 @@
 name: saprot_static
-model_name: westlake-repl/SaProt_650M_AF2
+model_name: westlake-repl/SaProt_650M_PDB
 output_dim: 1280
 gnn:                             # residue GNN comparator on the frozen embeddings
   conv_type: gcn
