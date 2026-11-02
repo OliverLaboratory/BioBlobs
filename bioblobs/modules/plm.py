@@ -261,7 +261,7 @@ def embed_esm2(
     mode: str = "window",
     max_batch_tokens: int = 8192,
     device: str | torch.device = "cpu",
-    local_files_only: bool = True,
+    local_files_only: bool = False,
 ) -> list[torch.Tensor]:
     """Embed sequences with ESM2, returning one ``[len(sequence), D]`` float32 tensor each.
 
@@ -305,7 +305,7 @@ def embed_saprot(
     mode: str = "window",
     max_batch_tokens: int = 8192,
     device: str | torch.device = "cpu",
-    local_files_only: bool = True,
+    local_files_only: bool = False,
     pad_token: str = "Xd",
 ) -> list[torch.Tensor]:
     """Embed sequences with SaProt, one ``[len(sequence), D]`` float32 tensor each.

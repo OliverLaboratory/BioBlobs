@@ -100,8 +100,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--local-files-only",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Only use the local HuggingFace cache; never download weights.",
+        default=False,
+        help="Only use the local Hugging Face cache (default: download weights when missing).",
     )
     return p.parse_args()
 
