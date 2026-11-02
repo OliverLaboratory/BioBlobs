@@ -16,7 +16,7 @@ runs BioBlobs. No precomputed caches are needed.
 
 ```bash
 # Download the released model
-huggingface-cli download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
+hf download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
 
 # Every .pdb file in a folder, with the released model
 python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results

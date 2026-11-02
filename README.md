@@ -30,7 +30,7 @@ paper's M-CSA results. Download it from [Hugging Face](https://huggingface.co/xw
 and run it:
 
 ```bash
-huggingface-cli download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
+hf download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
 python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results
 ```
 
