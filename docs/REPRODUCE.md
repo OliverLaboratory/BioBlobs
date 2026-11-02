@@ -135,8 +135,9 @@ The worker count does not change training.
 - The ESM2-T30 seed-alignment rows of the VenusX tables were trained with an earlier version of
   the seed-alignment code. The released code is the version that produced the SaProt-650M rows.
 - The M-CSA chain selection, the 79 held-out enzymes and the 74 evaluated enzymes ship as fixed
-  files in `data/mcsa/`. Re-deriving the held-out set from the MMseqs2 clustering gives one extra
-  chain (1znv_B), as noted in `data/mcsa/heldout_ids.txt`.
+  files in `data/mcsa/`. The held-out set is the MMseqs2 representative of each cluster that holds
+  M-CSA chains but no training protein, as described in the header of `data/mcsa/heldout_ids.txt`.
+  A different MMseqs2 version may cluster differently.
 - Compared with the May 2026 release, several config names changed: `decoders=mlp` is now
   `mean_pool`, `datasets=go` is `go_mf`, `tasks=multi-class` is `multi_class`,
   `partitioners.num_blobs_per_protein` is `partitioners.num_blobs`, and the loss weights moved to
