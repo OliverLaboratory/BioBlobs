@@ -33,15 +33,17 @@ SCORES = (
 @torch.no_grad()
 def _model_scores(model: BioBlobs, batch: Batch, score: str) -> tuple[torch.Tensor, torch.Tensor]:
     out = model(batch)
+    if score == "attention":
+        if out.residue_attention is None:
+            raise ValueError("--score attention needs a decoders=attention_pool checkpoint")
+        return out.logits, out.residue_attention
+    if score not in {"weighted_membership", "max_membership"}:
+        raise ValueError(f"Unknown residue score {score!r}")
+    if out.partition is None:
+        raise ValueError(f"--score {score} needs a checkpoint with a partitioner")
     if score == "weighted_membership":
-        dense = weighted_membership(out.partition.memberships, out.importance)
-    elif score == "max_membership":
-        dense = max_membership(out.partition.memberships, out.partition.blob_mask)
-    elif score == "attention":
-        dense = out.residue_attention
-    else:
-        raise ValueError(score)
-    return out.logits, dense
+        return out.logits, weighted_membership(out.partition.memberships, out.importance)
+    return out.logits, max_membership(out.partition.memberships, out.partition.blob_mask)
 
 
 def residue_scores(
