@@ -7,9 +7,9 @@ cluster containing an M-CSA chain. Retraining on the result removes close
 train/M-CSA-test homologs, so an M-CSA recovery signal cannot be attributed to
 leakage.
 
-The M-CSA held-out/evaluation ids shipped in ``data/mcsa/`` were derived from a
-similar (not necessarily identical-snapshot) clustering; see
-``data/mcsa/heldout_ids.txt`` for the exact caveat.
+The M-CSA held-out ids in ``data/mcsa/heldout_ids.txt`` are the representatives of the
+clusters that hold M-CSA chains but no training protein. A different MMseqs2 version may
+cluster differently.
 
 Outputs:
     <out-csv>                        filtered train rows (same columns as --train-csv)

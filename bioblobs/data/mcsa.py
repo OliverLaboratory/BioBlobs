@@ -8,7 +8,7 @@ Inputs (shipped under ``data/mcsa/`` unless noted otherwise):
     mcsa_single_chain.json   one chain per M-CSA entry: pdb_id, chain_used,
                              ec_number, catalytic_residues[{resid, ...}]
     heldout_ids.txt          79 pdb_chain ids with no SwissProt EC-L3 training
-                             protein in the same MMseqs2 cluster
+                             protein in the same MMseqs2 cluster, one per cluster
     <feat_cache>.pt          NOT shipped (large): {pdb_chain: {"nf", "ca", "resnums"}},
                              a cached ESM2 feature file. Path is required via
                              ``cfg.feat_cache``.

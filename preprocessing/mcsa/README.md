@@ -63,10 +63,9 @@ chain.
     --out-csv data/swissprot_ec/train_split_train_homfiltered.csv
 ```
 
-`data/mcsa/heldout_ids.txt` (the 79 M-CSA chains with no training homolog) was derived
-from a similar clustering. Re-running this script with MMseqs2 may mark one additional
-chain (`1znv_B`) as held out as well; see the header of `data/mcsa/heldout_ids.txt`.
-The shipped file is the one used for the paper.
+`data/mcsa/heldout_ids.txt` lists the representative of each cluster that holds M-CSA
+chains but no training protein (79 chains). The shipped file is the one used for the paper.
+A different MMseqs2 version may cluster differently.
 
 ## Required external tools
 

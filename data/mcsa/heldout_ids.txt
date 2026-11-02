@@ -1,8 +1,9 @@
-# M-CSA chains with no SwissProt EC-L3 training protein in the same MMseqs2
-# cluster (easy-cluster, --min-seq-id 0.3, -c 0.5, --cov-mode 1; see
-# preprocessing/mcsa/build_homology_excluded_train.py). 79 chains.
-# Re-running that clustering with MMseqs2 may also mark 1znv_B as held out;
-# the list here is the one used for the paper.
+# M-CSA chains with no SwissProt EC-L3 training homolog. MMseqs2 easy-cluster
+# (--min-seq-id 0.3, -c 0.5, --cov-mode 1, run by
+# preprocessing/mcsa/build_homology_excluded_train.py) groups the training proteins
+# with the M-CSA chains. 79 clusters hold M-CSA chains but no training protein, and
+# this file lists the representative of each. One of these clusters holds two M-CSA
+# chains, 1fr2_B and 1znv_B, and only its representative 1fr2_B is listed.
 1a0i_A
 1a41_A
 1ak0_A
