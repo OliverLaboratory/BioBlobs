@@ -10,7 +10,8 @@ runs BioBlobs. No precomputed caches are needed.
   classes (242 classes), ESM2-T30 embeddings, 8 blobs with residual vector quantization. It is the
   model behind the paper's M-CSA results. The folder holds `model.safetensors`, `config.yaml` and
   `classes.json`.
-- **Your own model**: any `best.ckpt` written by `train_bioblobs.py`.
+- **Your own model**: any `best.ckpt` written by `train_bioblobs.py`. Such a checkpoint has no
+  `classes.json`, so classes are reported by index.
 
 ## Usage
 
