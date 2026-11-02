@@ -132,6 +132,9 @@ The worker count does not change training.
 
 ## 4. Notes
 
+- `prepare_proteinshake.py` writes the data caches in split-file order, which differs from the order
+  of the original runs. The proteins, sequences and coordinates are the same, but retrained models will
+  not match the paper's checkpoints bit for bit.
 - The ESM2-T30 seed-alignment rows of the VenusX tables were trained with an earlier version of
   the seed-alignment code. The released code is the version that produced the SaProt-650M rows.
 - The M-CSA chain selection, the 79 held-out enzymes and the 74 evaluated enzymes ship as fixed
