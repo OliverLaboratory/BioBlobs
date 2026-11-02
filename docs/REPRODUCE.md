@@ -125,7 +125,10 @@ This reproduces the BioBlobs row of Table 9. The third-party baselines
 | M-CSA model | 1 GPU | about 70 s per epoch, 100 epochs |
 | M-CSA evaluation | CPU | minutes |
 
-GO-MF needs 35–50 GB of host memory per run, plus room to cache its 25 GB embedding file.
+GO-MF needs 35–50 GB of host memory per run, plus room to cache its 25 GB embedding file. On a
+host with 62 GB of RAM, train GO-MF with `training.num_workers=1` and Pfam with
+`training.num_workers=2`, because each data-loader worker gradually copies part of the dataset.
+The worker count does not change training.
 
 ## 4. Notes
 
