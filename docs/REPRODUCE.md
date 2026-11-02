@@ -137,7 +137,9 @@ The worker count does not change training.
 - The M-CSA chain selection, the 79 held-out enzymes and the 74 evaluated enzymes ship as fixed
   files in `data/mcsa/`. The held-out set is the MMseqs2 representative of each cluster that holds
   M-CSA chains but no training protein, as described in the header of `data/mcsa/heldout_ids.txt`.
-  A different MMseqs2 version may cluster differently.
+  `preprocessing/mcsa/build_homology_excluded_train.py` also writes this list, and with MMseqs2
+  18.8cc5c it reproduces the shipped file exactly. A different MMseqs2 version may cluster
+  differently.
 - Compared with the May 2026 release, several config names changed: `decoders=mlp` is now
   `mean_pool`, `datasets=go` is `go_mf`, `tasks=multi-class` is `multi_class`,
   `partitioners.num_blobs_per_protein` is `partitioners.num_blobs`, and the loss weights moved to

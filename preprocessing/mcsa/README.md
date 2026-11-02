@@ -64,9 +64,10 @@ chain.
 ```
 
 `data/mcsa/heldout_ids.txt` lists the representative of each cluster that holds M-CSA
-chains but no training protein (79 chains). The shipped file is the one used for the paper.
-A different MMseqs2 version may cluster differently.
-The script also writes this list to `<workdir>/heldout_ids.txt`.
+chains but no training protein (79 chains). It is the list used for the paper. The script
+also writes this list to `<workdir>/heldout_ids.txt`, and a full re-run with MMseqs2
+18.8cc5c reproduces the shipped file exactly. A different MMseqs2 version may cluster
+differently.
 
 ## Required external tools
 
