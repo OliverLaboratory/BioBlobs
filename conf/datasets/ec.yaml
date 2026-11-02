@@ -7,3 +7,5 @@ edge_types: knn_30                # residue graph for graph comparators; also na
 min_backbone_completion: 0.95
 num_workers: 8
 test_mode: false                  # true: 10 proteins per split, for smoke tests
+embedding_cache: null              # default: <prepared dataset>/<encoder>_cache_mmap
+max_samples: null                 # keep only the first N proteins per split (smoke tests)

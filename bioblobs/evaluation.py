@@ -150,3 +150,50 @@ def evaluate(
 
 def _jsonable(x: Any) -> Any:
     return x.tolist() if isinstance(x, np.ndarray) else str(x)
+
+
+@torch.no_grad()
+def evaluate_mcsa(
+    model: BioBlobs,
+    structures: list[dict],
+    ids: set[str] | None,
+    score: str,
+    out_dir: str | Path,
+) -> dict[str, Any]:
+    """Catalytic-residue localization on M-CSA enzymes, one protein per forward pass.
+
+    Every residue of a chain is ranked (no validity mask), and the summary is the median
+    over enzymes of AUROC, AUPRC and F1@L.
+
+    Args:
+        model: Trained model in eval mode.
+        structures: Output of ``bioblobs.data.mcsa.load_mcsa``.
+        ids: Enzymes to evaluate (for example the 74 ids of ``data/mcsa/evaluation_ids.txt``);
+            all when None.
+        score: ``"max_membership"`` or ``"weighted_membership"``.
+        out_dir: Output directory for ``metrics.json`` and ``per_protein.jsonl``.
+
+    Returns:
+        The summary metrics.
+    """
+    from bioblobs.data.mcsa import to_graph
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    device = next(model.parameters()).device
+    rows = []
+    for structure in structures:
+        if ids is not None and structure["name"] not in ids:
+            continue
+        graph = to_graph(structure)
+        _, dense = _model_scores(model, Batch.from_data_list([graph]).to(device), score)
+        metrics = residue_ranking_metrics(dense[0], graph.residue_target)
+        if metrics is not None:
+            rows.append({"name": structure["name"], **metrics, "scores": dense[0].tolist()})
+    summary = {"score": score, **median_metrics(rows)}
+    (out_dir / "metrics.json").write_text(json.dumps(summary, indent=2))
+    with (out_dir / "per_protein.jsonl").open("w") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    logger.success("M-CSA {}", json.dumps(summary))
+    return summary

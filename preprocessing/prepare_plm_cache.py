@@ -7,41 +7,34 @@ reads). ``--structures`` is a torch ``.pt`` file holding either ``list[dict]`` (
 SwissProt) or ``dict[str, dict]`` (VenusX, keyed by ``protein_uid``) of structure dicts with at
 least a sequence field and a cache-key field (``--seq-field``/``--key-field``).
 
-Length policy: ``--mode window`` (default) reproduces every reported result -- sequences longer
-than ``--window`` are embedded in overlapping windows and stitched (see
-``bioblobs.modules.plm``). ``--max-len`` is a separate, optional *admission filter*: proteins
-whose sanitized sequence exceeds it are skipped entirely, not truncated. This is how the two
-M-CSA evaluation caches in the dev repo differ from each other -- both used windowed embedding;
-``feat_cache.pt`` filtered at 1022 residues, ``feat_cache_maxlen1500.pt`` raised the filter to
-1500 (recovering chains in (1022, 1500] via genuine multi-window stitching). Reproduce either
-with ``--max-len 1022`` or ``--max-len 1500`` here.
+Length policy: ``--mode window`` (default, used for every reported result) embeds sequences longer
+than ``--window`` in overlapping windows and averages the overlaps (see
+``bioblobs.modules.plm``). ``--max-len`` is an optional admission filter: longer proteins are
+skipped, not truncated.
 
-A cache that already covers every key of the current ``--structures`` is left untouched unless
-``--overwrite`` is passed; otherwise it is rebuilt from scratch (no incremental, per-key resume).
+A cache that already covers every key of the given structures is left untouched unless
+``--overwrite`` is passed; otherwise it is rebuilt from scratch.
 
 Usage:
-    # ESM2 over a ProteinShake structure cache (name -> embeddings)
-    .venv/bin/python -B preprocessing/prepare_plm_cache.py \\
-        --structures data/ec_proteinshake/cache/structure_train_eps_8_0.7_cache.pt \\
+    # ESM2 over the three split caches of a ProteinShake task (name -> embeddings)
+    python preprocessing/prepare_plm_cache.py \\
+        --structures data/ec_proteinshake/cache/sequence_{train,val,test}_knn_30_0.7_cache.pt \\
         --encoder esm2_static --out data/ec_proteinshake/esm2_static_cache_mmap
 
     # SaProt needs the matching PDB files for Foldseek
-    .venv/bin/python -B preprocessing/prepare_plm_cache.py \\
-        --structures data/ec_proteinshake/cache/structure_train_eps_8_0.7_cache.pt \\
+    python preprocessing/prepare_plm_cache.py \\
+        --structures data/ec_proteinshake/cache/sequence_{train,val,test}_knn_30_0.7_cache.pt \\
         --encoder saprot_static --pdb-dir data/ec_proteinshake/pdb \\
         --foldseek-bin data/foldseek/bin/foldseek \\
         --out data/ec_proteinshake/saprot_static_cache_mmap
 
     # VenusX uid-keyed structure cache
-    .venv/bin/python -B preprocessing/prepare_plm_cache.py \\
-        --structures data/venusx_site_fragment/Act/MF50/cache/uid_structures.pt \\
+    python preprocessing/prepare_plm_cache.py \\
+        --structures data/venusx_site_fragment/Act/MF50/cache/uid_structures_*.pt \\
         --encoder esm2_static --key-field protein_uid \\
         --out data/venusx_site_fragment/Act/MF50/esm2_static_cache_mmap
 
-    # M-CSA-style length-filtered caches (see "Length policy" above)
-    .venv/bin/python -B preprocessing/prepare_plm_cache.py \\
-        --structures experiments/mcsa/structures.pt --encoder esm2_static --max-len 1500 \\
-        --out experiments/mcsa/esm2_static_cache_mmap_maxlen1500
+    # M-CSA features are built by preprocessing/mcsa/build_features.py instead.
 """
 
 from __future__ import annotations
@@ -80,7 +73,8 @@ def parse_args() -> argparse.Namespace:
         "--structures",
         required=True,
         type=Path,
-        help="torch .pt file: list[dict] or dict[str, dict] of structure dicts.",
+        nargs="+",
+        help="torch .pt files: list[dict] or dict[str, dict] of structure dicts.",
     )
     p.add_argument("--encoder", required=True, choices=["esm2_static", "saprot_static"])
     p.add_argument("--out", required=True, type=Path, help="Output cache directory.")
@@ -205,21 +199,34 @@ def _iter_embeddings(structures: list[dict], args: argparse.Namespace):
         keys = [str(s[args.key_field]) for s in chunk]
         if args.encoder == "esm2_static":
             embeddings = embed_esm2(
-                sequences, model_name=args.model_name, repr_layer=args.repr_layer,
-                window=args.window, overlap=args.overlap, mode=args.mode,
-                max_batch_tokens=args.max_batch_tokens, device=args.device,
+                sequences,
+                model_name=args.model_name,
+                repr_layer=args.repr_layer,
+                window=args.window,
+                overlap=args.overlap,
+                mode=args.mode,
+                max_batch_tokens=args.max_batch_tokens,
+                device=args.device,
                 local_files_only=args.local_files_only,
-            )  # fmt: skip
+            )
         else:
             pdb_paths = [_pdb_path(s, args) for s in chunk]
             chains = [s.get(args.chain_field) if args.chain_field else None for s in chunk]
             embeddings = embed_saprot(
-                sequences, pdb_paths, chains=chains, foldseek_bin=args.foldseek_bin,
-                model_name=args.model_name, repr_layer=args.repr_layer, window=args.window,
-                overlap=args.overlap, mode=args.mode, max_batch_tokens=args.max_batch_tokens,
-                device=args.device, local_files_only=args.local_files_only,
+                sequences,
+                pdb_paths,
+                chains=chains,
+                foldseek_bin=args.foldseek_bin,
+                model_name=args.model_name,
+                repr_layer=args.repr_layer,
+                window=args.window,
+                overlap=args.overlap,
+                mode=args.mode,
+                max_batch_tokens=args.max_batch_tokens,
+                device=args.device,
+                local_files_only=args.local_files_only,
                 pad_token=args.saprot_pad_token,
-            )  # fmt: skip
+            )
         logger.info(
             "Embedded {}/{} proteins",
             min(start + args.chunk_size, len(structures)),
@@ -237,7 +244,7 @@ def main() -> None:
     if args.model_name is None:
         args.model_name = DEFAULT_MODEL_NAME[args.encoder]
 
-    structures = _load_structures(args.structures)
+    structures = [s for path in args.structures for s in _load_structures(path)]
     if not structures:
         raise RuntimeError(f"No structures found in {args.structures}")
     if args.key_field not in structures[0] or args.seq_field not in structures[0]:
@@ -246,8 +253,13 @@ def main() -> None:
             f"in structures (have {sorted(structures[0])})"
         )
     unique = _dedupe(structures, args.key_field)
-    logger.info("{}: {} structures, {} unique by {!r}", args.structures, len(structures),
-                len(unique), args.key_field)  # fmt: skip
+    logger.info(
+        "{}: {} structures, {} unique by {!r}",
+        args.structures,
+        len(structures),
+        len(unique),
+        args.key_field,
+    )
 
     if args.max_len is not None:
         before = len(unique)
@@ -264,16 +276,30 @@ def main() -> None:
     if not args.overwrite:
         existing = _existing_keys(args.out)
         if existing and required <= existing:
-            logger.info("{} already covers all {} proteins; nothing to do (pass --overwrite "
-                        "to rebuild).", args.out, len(required))  # fmt: skip
+            logger.info(
+                "{} already covers all {} proteins; nothing to do (pass --overwrite to rebuild).",
+                args.out,
+                len(required),
+            )
             return
         if existing:
-            logger.info("{} of {} proteins missing from {}; rebuilding the full cache.",
-                        len(required - existing), len(required), args.out)  # fmt: skip
+            logger.info(
+                "{} of {} proteins missing from {}; rebuilding the full cache.",
+                len(required - existing),
+                len(required),
+                args.out,
+            )
 
-    logger.info("encoder={} model={} proteins={} device={} mode={} window={} overlap={}",
-                args.encoder, args.model_name, len(unique), args.device, args.mode,
-                args.window, args.overlap)  # fmt: skip
+    logger.info(
+        "encoder={} model={} proteins={} device={} mode={} window={} overlap={}",
+        args.encoder,
+        args.model_name,
+        len(unique),
+        args.device,
+        args.mode,
+        args.window,
+        args.overlap,
+    )
 
     pairs = _iter_embeddings(unique, args)
     try:

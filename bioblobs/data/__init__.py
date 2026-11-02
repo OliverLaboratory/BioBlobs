@@ -24,6 +24,7 @@ SOURCES = {
 
 
 GRAPH_PARTITIONERS = {"diffpool", "topk", "sagpool"}
+SPLITS = {"swissprot": ("train", "val")}
 
 
 @dataclass
@@ -63,10 +64,13 @@ def load_splits(cfg: DictConfig, names: tuple[str, ...] = ("train", "val", "test
             structures, n = source.load_split(cfg, split, site_supervised=site)
         else:
             structures, n = source.load_split(cfg, split)
+        if ds.get("max_samples"):
+            structures = structures[: int(ds.max_samples)]
         return ProteinGraphDataset(structures, embeddings, key, edge_types, graphs), n
 
+    available = SPLITS.get(SOURCES[ds.dataset_name], ("train", "val", "test"))
     loaded, num_classes = {}, 0
-    for name in names:
+    for name in (n for n in names if n in available):
         loaded[name], num_classes = load(name)
     counts = source.class_counts(cfg) if hasattr(source, "class_counts") else None
     return Splits(loaded.get("train"), loaded.get("val"), loaded.get("test"), num_classes, counts)
