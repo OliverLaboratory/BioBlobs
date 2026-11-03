@@ -79,13 +79,12 @@ inference.py            predictions, blobs and residue scores for your PDB files
 bioblobs/
   model.py              BioBlobs: encoder -> partitioner -> (RVQ) -> MIL predictor
   objectives.py         Hoyer sparsity, seed alignment, class-balanced weights
-  modules/              encoder, partitioner, MIL predictor, RVQ, and the comparator models
+  modules/              encoder, partitioner, MIL predictor, RVQ
   data/                 structures, embedding caches, ProteinShake, VenusX, Swiss-Prot EC, M-CSA
   training/             Lightning module, trainer, metrics
-  localization/         residue scores, AUROC / AUPRC / F1@L, score baselines
+  localization/         residue scores, AUROC / AUPRC / F1@L
 conf/                   Hydra configs, with the paper's settings in conf/experiment/
 preprocessing/          dataset download, structure parsing and embedding caches
-baselines/mcsa/         wrappers for the third-party M-CSA baselines
 data/mcsa/              M-CSA chain annotations and the evaluated enzyme lists
 tests/                  CPU smoke tests
 ```
@@ -114,5 +113,4 @@ Each source keeps its own terms of use.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The third-party models wrapped in `baselines/mcsa/` keep their own
-licenses.
+MIT, see [LICENSE](LICENSE).
