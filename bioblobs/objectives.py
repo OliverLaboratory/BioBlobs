@@ -1,8 +1,7 @@
 """Training objectives (Section 3.4).
 
 The total loss is ``L_task + lambda_H L_Hoyer`` (Eq. objective), plus, where enabled, the
-RVQ commitment term, seed alignment for site-supervised VenusX models, and the regularizer
-of a comparator partitioner.
+RVQ commitment term and seed alignment for site-supervised VenusX models.
 """
 
 from __future__ import annotations

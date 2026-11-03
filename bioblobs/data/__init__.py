@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from omegaconf import DictConfig
 
-from bioblobs.data.dataset import ProteinGraphDataset, make_loader, open_graph_cache
+from bioblobs.data.dataset import ProteinGraphDataset, make_loader
 from bioblobs.data.plm_cache import EmbeddingCache
 
 SOURCES = {
@@ -22,8 +22,6 @@ SOURCES = {
     "swissprot_ec": "swissprot",
 }
 
-
-GRAPH_PARTITIONERS = {"diffpool", "topk", "sagpool"}
 SPLITS = {"swissprot": ("train", "val")}
 
 
@@ -53,9 +51,6 @@ def load_splits(cfg: DictConfig, names: tuple[str, ...] = ("train", "val", "test
     root = Path(source.dataset_root(ds))
     cache_dir = ds.get("embedding_cache") or root / f"{cfg.encoders.name}_cache_mmap"
     embeddings = EmbeddingCache(cache_dir)
-    needs_graph = cfg.encoders.get("gnn") is not None or cfg.partitioners.name in GRAPH_PARTITIONERS
-    edge_types = ds.get("edge_types") if needs_graph else None
-    graphs = open_graph_cache(root, edge_types)
     key = ds.get("cache_key_field", "name")
 
     def load(split: str) -> tuple[ProteinGraphDataset, int]:
@@ -66,7 +61,7 @@ def load_splits(cfg: DictConfig, names: tuple[str, ...] = ("train", "val", "test
             structures, n = source.load_split(cfg, split)
         if ds.get("max_samples"):
             structures = structures[: int(ds.max_samples)]
-        return ProteinGraphDataset(structures, embeddings, key, edge_types, graphs), n
+        return ProteinGraphDataset(structures, embeddings, key), n
 
     available = SPLITS.get(SOURCES[ds.dataset_name], ("train", "val", "test"))
     loaded, num_classes = {}, 0

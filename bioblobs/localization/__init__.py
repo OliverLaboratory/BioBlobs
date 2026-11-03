@@ -1,1 +1,1 @@
-"""Residue scores, localization metrics and residue-score baselines."""
+"""Residue scores and localization metrics."""

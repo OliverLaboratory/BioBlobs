@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import random
 from collections.abc import Iterator, Sequence
-from pathlib import Path
 
 import torch
-from loguru import logger
 from torch.utils.data import Dataset, Sampler
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from bioblobs.data.plm_cache import EmbeddingCache, GraphCache
-from bioblobs.data.structure import Structure, residue_graph, to_graph
+from bioblobs.data.plm_cache import EmbeddingCache
+from bioblobs.data.structure import Structure, to_graph
 
 
 class ProteinGraphDataset(Dataset):
@@ -23,8 +21,6 @@ class ProteinGraphDataset(Dataset):
         structures: Structure dicts (see ``bioblobs.data.structure.to_graph``).
         embeddings: Residue embedding cache.
         key_field: Structure field used as the embedding-cache key.
-        edge_types: Residue graph spec (``"knn_30"``, ``"eps_8"``) or None for no graph.
-        graph_cache: Optional precomputed residue graphs (same spec as ``edge_types``).
     """
 
     def __init__(
@@ -32,14 +28,10 @@ class ProteinGraphDataset(Dataset):
         structures: Sequence[Structure],
         embeddings: EmbeddingCache,
         key_field: str = "name",
-        edge_types: str | None = None,
-        graph_cache: GraphCache | None = None,
     ) -> None:
         self.structures = structures
         self.embeddings = embeddings
         self.key_field = key_field
-        self.edge_types = edge_types
-        self.graph_cache = graph_cache
         self.node_counts = [len(s["seq"]) for s in structures]
 
     def __len__(self) -> int:
@@ -47,24 +39,7 @@ class ProteinGraphDataset(Dataset):
 
     def __getitem__(self, index: int) -> Data:
         structure = self.structures[index]
-        data = to_graph(structure, self.embeddings.get(structure[self.key_field]))
-        if self.edge_types is not None:
-            if self.graph_cache is not None and structure["name"] in self.graph_cache:
-                data.edge_index = self.graph_cache.get(structure["name"])
-            else:
-                data.edge_index = residue_graph(data.x, data.mask, self.edge_types)
-        return data
-
-
-def open_graph_cache(root: Path, edge_types: str | None) -> GraphCache | None:
-    """Open ``<root>/edge_cache_mmap/<edge_types>`` when it exists."""
-    if edge_types is None:
-        return None
-    path = root / "edge_cache_mmap" / edge_types
-    if not (path / "edges.bin").exists():
-        logger.info("No graph cache at {}; residue graphs are built on the fly", path)
-        return None
-    return GraphCache(path)
+        return to_graph(structure, self.embeddings.get(structure[self.key_field]))
 
 
 class LengthBucketBatchSampler(Sampler[list[int]]):

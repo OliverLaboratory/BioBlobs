@@ -3,7 +3,7 @@ data_dir: data
 split: sequence                   # sequence or structure (ProteinShake 70% similarity splits)
 split_similarity_threshold: 0.7
 ec_level: 3
-edge_types: knn_30                # residue graph for graph comparators; also names the cache
+edge_types: knn_30                # names the structure cache file (cache/<split>_<split>_knn_30_...)
 min_backbone_completion: 0.95
 num_workers: 8
 test_mode: false                  # true: 10 proteins per split, for smoke tests

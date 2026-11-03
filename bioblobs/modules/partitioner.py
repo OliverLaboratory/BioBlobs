@@ -22,10 +22,6 @@ class Partition:
         candidate_mask: Candidate set ``C^(k)`` of each blob, ``[B, K, N]``.
         seed_logits: Seed score ``s_i`` of every residue, ``[B, N]``.
         seed_indices: Residue index of each seed, ``-1`` for empty slots, ``[B, K]``.
-        blob_features: Explicit blob embeddings ``[B, K, D]`` for partitioners whose blobs are
-            not membership-weighted means (TopK / SAGPool); None otherwise.
-        regularizer: Weighted structural regularizer of the partitioner (for example
-            DiffPool's entropy and link terms), a scalar or None.
         metrics: Detached diagnostics for logging.
     """
 
@@ -35,8 +31,6 @@ class Partition:
     candidate_mask: torch.Tensor | None = None
     seed_logits: torch.Tensor | None = None
     seed_indices: torch.Tensor | None = None
-    blob_features: torch.Tensor | None = None
-    regularizer: torch.Tensor | None = None
     metrics: dict[str, torch.Tensor] = field(default_factory=dict)
 
 

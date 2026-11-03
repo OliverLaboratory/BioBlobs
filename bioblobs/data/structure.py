@@ -12,7 +12,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
-import torch_cluster
 from loguru import logger
 from torch_geometric.data import Data
 from tqdm import tqdm
@@ -162,35 +161,9 @@ def write_pdb(protein: dict, path: str | Path) -> None:
     Path(path).write_text("\n".join(lines))
 
 
-def residue_graph(ca: torch.Tensor, mask: torch.Tensor, edge_types: str) -> torch.Tensor:
-    """Residue contact graph over valid residues: ``knn_<k>`` or ``eps_<radius>``.
-
-    Args:
-        ca: C-alpha coordinates, ``[N, 3]``.
-        mask: Valid residues, ``[N]``.
-        edge_types: Graph spec, for example ``"knn_30"`` or ``"eps_8"``.
-
-    Returns:
-        ``edge_index`` over residue indices, ``[2, E]``.
-    """
-    method, value = edge_types.split("_")
-    valid = mask.nonzero(as_tuple=True)[0]
-    if valid.numel() <= 1:
-        return torch.empty((2, 0), dtype=torch.long)
-    if method == "knn":
-        k = min(int(value), valid.numel() - 1)
-        local = torch_cluster.knn_graph(ca[valid], k=k)
-    elif method == "eps":
-        local = torch_cluster.radius_graph(ca[valid], r=float(value))
-    else:
-        raise ValueError(f"Unknown edge_types {edge_types!r}")
-    return valid[local]
-
-
 def to_graph(
     structure: Structure,
     embeddings: torch.Tensor,
-    edge_index: torch.Tensor | None = None,
 ) -> Data:
     """Build a graph sample from a structure and its residue embeddings.
 
@@ -201,7 +174,6 @@ def to_graph(
         structure: Dict with ``name``, ``seq``, ``coords`` ``[N][4][3]``, ``resnum`` and
             optionally ``label`` and ``residue_target``.
         embeddings: Residue embeddings, ``[N, D]``.
-        edge_index: Optional residue graph.
 
     Returns:
         ``Data`` with ``x``, ``mask``, ``node_features``, ``y`` and optional fields.
@@ -226,8 +198,6 @@ def to_graph(
         name=structure["name"],
         num_nodes=coords.shape[0],
     )
-    if edge_index is not None:
-        data.edge_index = edge_index
     if structure.get("residue_target") is not None:
         data.residue_target = torch.tensor(structure["residue_target"], dtype=torch.float32)
     return data

@@ -1,4 +1,4 @@
-"""CPU smoke tests on synthetic proteins: every model family runs forward and backward."""
+"""CPU smoke tests on synthetic proteins: each reported BioBlobs setting runs forward and back."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from bioblobs.evaluation import residue_scores
 from bioblobs.localization.metrics import residue_ranking_metrics
 from bioblobs.localization.scores import max_membership, weighted_membership
 from bioblobs.model import build_model
-from bioblobs.modules.pooling import AttentionPooling
 from bioblobs.objectives import hoyer_sparsity
 from bioblobs.training.lightning_module import BioBlobsModule
 from bioblobs.training.metrics import fmax, multiclass_metrics
@@ -40,8 +39,6 @@ def synthetic_batch(
         )
         site = torch.zeros(n)
         site[: max(1, n // 5)] = 1.0
-        edges = torch.stack([torch.arange(n - 1), torch.arange(1, n)])
-        edges = torch.cat([edges, edges.flip(0)], dim=1)
         items.append(
             Data(
                 node_features=torch.randn(n, dim, generator=g),
@@ -49,7 +46,6 @@ def synthetic_batch(
                 mask=mask,
                 y=y,
                 residue_target=site,
-                edge_index=edges,
                 num_nodes=n,
             )
         )
@@ -70,12 +66,6 @@ CASES = [
     ("+experiment=venusx/act_esm2_seedalign",),
     ("+experiment=venusx/act_saprot_labelfree",),
     ("+experiment=mcsa/rvq_k8", "codebooks.warmup_epochs=0", "codebooks.num_codes=8"),
-    ("partitioners=none", "decoders=mean_pool"),
-    ("partitioners=none", "decoders=attention_pool"),
-    ("partitioners=none", "decoders=mean_pool", "encoders=gat_esm2"),
-    ("partitioners=diffpool",),
-    ("partitioners=topk",),
-    ("partitioners=sagpool",),
 ]
 
 
@@ -94,8 +84,7 @@ def test_forward_backward(overrides: tuple[str, ...]) -> None:
     loss.backward()
     grads = [p.grad for p in module.parameters() if p.requires_grad and p.grad is not None]
     assert grads and all(torch.isfinite(g).all() for g in grads)
-    if out.partition is not None and out.importance is not None:
-        assert torch.allclose(out.importance.sum(-1), torch.ones(3), atol=1e-5)
+    assert torch.allclose(out.importance.sum(-1), torch.ones(3), atol=1e-5)
 
 
 def test_partition_properties() -> None:
@@ -132,36 +121,18 @@ def test_empty_seed_slots_stay_finite() -> None:
     assert grads and all(torch.isfinite(g).all() for g in grads)
 
 
-def test_attention_pool_attends() -> None:
-    """decoders=attention_pool builds a learned residue attention, not a mean."""
-    cfg = config("partitioners=none", "decoders=attention_pool")
-    module = BioBlobsModule(cfg, NUM_CLASSES).eval()
-    assert isinstance(module.model.predictor, AttentionPooling)
-    batch = synthetic_batch()
-    with torch.no_grad():
-        out = module(batch)
-    attention, valid = out.residue_attention, out.residue_mask
-    assert torch.allclose(attention.sum(-1), torch.ones(3), atol=1e-5)
-    assert (attention[~valid] == 0).all()
-    # Not uniform within a protein (uniform attention would be 1/L on every valid residue).
-    assert all(attention[i][valid[i]].std() > 0 for i in range(3))
-
-
 @pytest.mark.parametrize(
     ("overrides", "score", "message"),
     [
-        (("partitioners=none", "decoders.name=simple_attn"), None, "Unknown decoder"),
-        (("decoders=attention_pool",), None, "requires a partitioner"),
-        (("partitioners=none",), None, "requires a partitioner"),
-        (("partitioners=none", "decoders=mean_pool"), "attention", "attention_pool checkpoint"),
-        ((), "attention", "attention_pool checkpoint"),
-        (("partitioners=none", "decoders=attention_pool"), "max_membership", "partitioner"),
+        (("decoders.name=simple_attn",), None, "Unknown decoder"),
+        (("partitioners.name=diffpool",), None, "Unknown partitioner"),
+        ((), "attention", "Unknown residue score"),
     ],
 )
 def test_mismatched_choices_fail(
     overrides: tuple[str, ...], score: str | None, message: str
 ) -> None:
-    """Unknown or mismatched decoders and residue scores raise instead of falling back."""
+    """Unknown decoders, partitioners and residue scores raise instead of falling back."""
     with pytest.raises(ValueError, match=message):
         model = build_model(config(*overrides), NUM_CLASSES).eval()
         residue_scores(model, synthetic_batch(), score)

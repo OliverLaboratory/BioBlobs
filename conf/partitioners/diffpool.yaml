@@ -1,6 +1,0 @@
-name: diffpool
-max_clusters: 12
-hidden_dim: 128
-temperature: 1.0
-entropy_weight: 0.1
-link_weight: 1.0

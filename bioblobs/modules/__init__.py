@@ -1,1 +1,1 @@
-"""Model components (Sections 3.1-3.3) and comparators."""
+"""Model components (Sections 3.1-3.3)."""

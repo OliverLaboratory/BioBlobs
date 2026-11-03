@@ -64,8 +64,6 @@ class BioBlobsModule(pl.LightningModule):
             terms["hoyer"] = weight("hoyer_weight") * hoyer_sparsity(
                 part.memberships, part.candidate_mask, part.blob_mask
             )
-        if part is not None and part.regularizer is not None:
-            terms["partitioner"] = part.regularizer
         if out.quantized is not None and weight("rvq_weight", 0):
             terms["rvq"] = weight("rvq_weight") * out.quantized.commitment
         if weight("seed_align_weight", 0) or weight("blob_align_weight", 0):

@@ -1,12 +1,8 @@
-"""Train BioBlobs or a comparator on one task, select on validation and test once.
+"""Train BioBlobs on one task, select on validation and test once.
 
 Usage:
     # A reported BioBlobs setting (see conf/experiment/)
     python train_bioblobs.py +experiment=proteinshake/ec_sequence_esm2
-
-    # Comparators share the same entry point
-    python train_bioblobs.py datasets=ec partitioners=none decoders=mean_pool
-    python train_bioblobs.py datasets=ec encoders=gat_esm2 partitioners=none decoders=mean_pool
 
     # Three seeds
     python train_bioblobs.py -m +experiment=venusx/act_esm2_labelfree training.seed=1,2,3

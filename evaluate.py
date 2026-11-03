@@ -5,9 +5,6 @@ Usage:
     python evaluate.py --checkpoint outputs/venusx/act_esm2_labelfree/seed1/best.ckpt \
         --score weighted_membership --out results/act_esm2_labelfree_seed1
 
-    # Baselines on a pooling model: attention weights, integrated gradients, burial, random
-    python evaluate.py --checkpoint <attention_pool run>/best.ckpt --score attention --out ...
-
     # M-CSA catalytic residues with the released model (max-membership readout)
     python evaluate.py --checkpoint bioblobs-mcsa-rvq-k8 --mcsa-features data/mcsa/features.pt \
         --mcsa-ids data/mcsa/evaluation_ids.txt --score max_membership --out results/mcsa
@@ -35,7 +32,6 @@ def main() -> None:
     parser.add_argument("--split", default="test", choices=["val", "test"])
     parser.add_argument("--score", default=None, choices=SCORES)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--seed", type=int, default=1, help="seed of the random baseline")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--mcsa-features", default=None, help="M-CSA feature file (M-CSA mode)")
     parser.add_argument("--mcsa-ids", default=None, help="file of M-CSA ids to evaluate")
@@ -57,9 +53,7 @@ def main() -> None:
     cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(args.set))
     splits = load_splits(cfg, (args.split,))
     dataset = splits.test if args.split == "test" else splits.val
-    evaluate(
-        model, dataset, cfg, splits.num_classes, args.score, args.out, args.batch_size, args.seed
-    )
+    evaluate(model, dataset, cfg, splits.num_classes, args.score, args.out, args.batch_size)
 
 
 if __name__ == "__main__":

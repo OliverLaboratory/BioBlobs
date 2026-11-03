@@ -14,75 +14,32 @@ from torch_geometric.data import Batch
 from torch_geometric.utils import to_dense_batch
 
 from bioblobs.data import ProteinGraphDataset, make_loader
-from bioblobs.localization.baselines import burial_scores, integrated_gradients, random_scores
 from bioblobs.localization.metrics import median_metrics, residue_ranking_metrics
 from bioblobs.localization.scores import max_membership, weighted_membership
 from bioblobs.model import BioBlobs
 from bioblobs.training.metrics import fmax, multiclass_metrics
 
-SCORES = (
-    "weighted_membership",
-    "max_membership",
-    "attention",
-    "integrated_gradients",
-    "burial",
-    "random",
-)
+SCORES = ("weighted_membership", "max_membership")
 
 
 @torch.no_grad()
-def _model_scores(model: BioBlobs, batch: Batch, score: str) -> tuple[torch.Tensor, torch.Tensor]:
-    out = model(batch)
-    if score == "attention":
-        if out.residue_attention is None:
-            raise ValueError("--score attention needs a decoders=attention_pool checkpoint")
-        return out.logits, out.residue_attention
-    if score not in {"weighted_membership", "max_membership"}:
-        raise ValueError(f"Unknown residue score {score!r}")
-    if out.partition is None:
-        raise ValueError(f"--score {score} needs a checkpoint with a partitioner")
-    if score == "weighted_membership":
-        return out.logits, weighted_membership(out.partition.memberships, out.importance)
-    return out.logits, max_membership(out.partition.memberships, out.partition.blob_mask)
-
-
-def residue_scores(
-    model: BioBlobs, batch: Batch, score: str, seed: int = 0, batch_index: int = 0
-) -> tuple[torch.Tensor, torch.Tensor]:
+def residue_scores(model: BioBlobs, batch: Batch, score: str) -> tuple[torch.Tensor, torch.Tensor]:
     """Logits ``[B, C]`` and dense residue scores ``[B, N]`` for one batch.
 
     Args:
         model: Trained model in eval mode.
         batch: Collated proteins.
         score: One of ``SCORES``.
-        seed: Seed of the random baseline; batch ``b`` uses ``1000 * seed + b``.
-        batch_index: Position of the batch in the loader (random baseline only).
 
     Returns:
         Logits and residue scores.
     """
-    if score in {"weighted_membership", "max_membership", "attention"}:
-        return _model_scores(model, batch, score)
-    with torch.no_grad():
-        logits = model(batch).logits
-    if score == "burial":
-        flat = torch.cat(
-            [burial_scores(batch.x[batch.batch == g]) for g in range(batch.num_graphs)]
-        )
-    elif score == "random":
-        generator = torch.Generator().manual_seed(1000 * seed + batch_index)
-        flat = random_scores(batch.num_nodes, generator).to(batch.x.device)
-    elif score == "integrated_gradients":
-
-        def forward(x: torch.Tensor) -> torch.Tensor:
-            shifted = batch.clone()
-            shifted.node_features = x
-            return model(shifted).logits
-
-        flat = integrated_gradients(forward, batch.node_features.float(), logits.argmax(-1), 16)
-    else:
-        raise ValueError(f"Unknown score {score!r}")
-    return logits, to_dense_batch(flat, batch.batch)[0]
+    if score not in SCORES:
+        raise ValueError(f"Unknown residue score {score!r}")
+    out = model(batch)
+    if score == "weighted_membership":
+        return out.logits, weighted_membership(out.partition.memberships, out.importance)
+    return out.logits, max_membership(out.partition.memberships, out.partition.blob_mask)
 
 
 def evaluate(
@@ -93,7 +50,6 @@ def evaluate(
     score: str | None,
     out_dir: str | Path,
     batch_size: int = 32,
-    seed: int = 0,
 ) -> dict[str, Any]:
     """Evaluate one model on one split and write ``metrics.json`` and ``per_protein.jsonl``.
 
@@ -108,7 +64,6 @@ def evaluate(
         score: Residue score (``SCORES``), or None for classification only.
         out_dir: Output directory.
         batch_size: Proteins per batch.
-        seed: Seed of the random baseline.
 
     Returns:
         The summary metrics.
@@ -117,13 +72,13 @@ def evaluate(
     out_dir.mkdir(parents=True, exist_ok=True)
     device = next(model.parameters()).device
     logits_all, labels_all, rows = [], [], []
-    for b, batch in enumerate(make_loader(dataset, batch_size, shuffle=False)):
+    for batch in make_loader(dataset, batch_size, shuffle=False):
         batch = batch.to(device)
         if score is None:
             with torch.no_grad():
                 logits, dense = model(batch).logits, None
         else:
-            logits, dense = residue_scores(model, batch, score, seed=seed, batch_index=b)
+            logits, dense = residue_scores(model, batch, score)
         logits_all.append(logits.float().cpu())
         labels_all.append(batch.y.cpu())
         if dense is None or getattr(batch, "residue_target", None) is None:
@@ -188,7 +143,7 @@ def evaluate_mcsa(
         if ids is not None and structure["name"] not in ids:
             continue
         graph = to_graph(structure)
-        _, dense = _model_scores(model, Batch.from_data_list([graph]).to(device), score)
+        _, dense = residue_scores(model, Batch.from_data_list([graph]).to(device), score)
         metrics = residue_ranking_metrics(dense[0], graph.residue_target)
         if metrics is not None:
             rows.append({"name": structure["name"], **metrics, "scores": dense[0].tolist()})

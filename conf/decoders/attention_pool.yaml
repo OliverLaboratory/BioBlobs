@@ -1,5 +1,0 @@
-name: attention_pool
-input_layernorm: false
-proj_dim: 512
-dropout: 0.1
-hidden_multipliers: [4, 2]
