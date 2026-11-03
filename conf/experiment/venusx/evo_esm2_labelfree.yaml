@@ -1,0 +1,31 @@
+# @package _global_
+# Tables 2, 10, 11: BioBlobs on VenusX Evo with ESM2-T30, trained without site labels.
+defaults:
+  - override /datasets: venusx
+  - override /encoders: esm2_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /training: venusx
+
+name: venusx/evo_esm2_labelfree
+datasets:
+  target: Evo
+  site_supervised: false
+partitioners:
+  num_blobs: 20
+  seed_radius: 16.0
+  proximity_bias: 0.5
+decoders:
+  dropout: 0.3
+  use_blob_interaction: false
+training:
+  lr: 0.0001
+  weight_decay: 0.0001
+  batch_size: 32
+  epochs: 100
+objective:
+  hoyer_weight: 0.0
+  seed_align_weight: 0.0
+selection:
+  metric: macro_f1_fixed_vocab
+  patience: 30

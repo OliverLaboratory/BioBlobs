@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use BioBlobs, please cite the paper below."
+title: "BioBlobs"
+type: software
+license: MIT
+repository-code: "https://github.com/OliverLaboratory/BioBlobs"
+authors:
+  - family-names: Wang
+    given-names: Xin
+  - family-names: Shi
+    given-names: Kaiwen
+  - family-names: Oliver
+    given-names: Carlos
+preferred-citation:
+  type: conference-paper
+  title: "Unsupervised discovery of Functional Substructures"
+  authors:
+    - family-names: Wang
+      given-names: Xin
+    - family-names: Shi
+      given-names: Kaiwen
+    - family-names: Oliver
+      given-names: Carlos
+  collection-title: "Advances in Neural Information Processing Systems"
+  conference:
+    name: "NeurIPS 2026"
+  year: 2026
+  url: "https://arxiv.org/abs/2510.01632"

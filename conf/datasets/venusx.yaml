@@ -1,0 +1,11 @@
+dataset_name: venusx_site_fragment
+data_dir: data
+target: Act                       # Act, BindI, Evo or Motif
+split_strategy: MF50
+site_supervised: false            # protein set and site labels of the seed-aligned models
+cache_key_field: protein_uid
+edge_types: none
+min_backbone_completion: 0.95
+num_workers: 4
+embedding_cache: null              # default: <prepared dataset>/<encoder>_cache_mmap
+max_samples: null                 # keep only the first N proteins per split (smoke tests)

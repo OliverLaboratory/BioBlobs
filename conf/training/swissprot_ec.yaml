@@ -1,0 +1,11 @@
+optimizer: adamw
+lr: 2.3e-4
+weight_decay: 0.0
+batch_size: 512
+epochs: 100
+schedule: warmup_cosine
+warmup_epochs: 1
+bucket_by_size: false
+num_workers: 8
+seed: 0
+deterministic: false

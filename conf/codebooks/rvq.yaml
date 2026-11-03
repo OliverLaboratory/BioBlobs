@@ -1,0 +1,14 @@
+enabled: true
+num_codes: 1024
+num_quantizers: 8
+code_dim: null
+beta: 0.25
+ema_decay: 0.99
+ema_eps: 1.0e-5
+normalize_input: true
+dead_code_revival: true
+revive_every_steps: 250
+revive_threshold: 1.0
+revive_frac: 0.0
+warmup_epochs: 2
+data_init: true

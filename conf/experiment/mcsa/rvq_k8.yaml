@@ -1,0 +1,24 @@
+# @package _global_
+# The M-CSA model (Figure 3, Tables 8 and 9): BioBlobs with RVQ, trained on SwissProt EC-L3.
+# The training arguments of the original run were not saved with its config; they are taken
+# from the run's recipe and its logged learning rates.
+defaults:
+  - override /datasets: swissprot_ec
+  - override /encoders: esm2_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /codebooks: rvq
+  - override /training: swissprot_ec
+
+name: mcsa/rvq_k8
+partitioners:
+  num_blobs: 8
+  seed_radius: 12.0
+  proximity_bias: 0.25
+objective:
+  hoyer_weight: 0.5
+  rvq_weight: 0.25
+  class_balanced_beta: 0.9999
+selection:
+  metric: macro_f1_fixed_vocab
+  patience: 1000                 # no early stopping: best validation epoch of 100

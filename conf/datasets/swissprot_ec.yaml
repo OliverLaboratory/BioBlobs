@@ -1,0 +1,6 @@
+dataset_name: swissprot_ec
+data_dir: data
+max_len: 1000                     # drop longer proteins from training
+num_workers: 8
+embedding_cache: null              # default: <prepared dataset>/<encoder>_cache_mmap
+max_samples: null                 # keep only the first N proteins per split (smoke tests)

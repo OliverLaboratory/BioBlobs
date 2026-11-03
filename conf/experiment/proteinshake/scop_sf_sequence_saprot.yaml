@@ -1,0 +1,31 @@
+# @package _global_
+# Reproduces the printed Table 1 cell: BioBlobs with SaProt-650M on scop_sf (sequence split).
+defaults:
+  - override /datasets: scop_sf
+  - override /encoders: saprot_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /tasks: multi_class
+  - override /training: proteinshake
+
+name: proteinshake/scop_sf_sequence_saprot
+datasets:
+  split: sequence
+partitioners:
+  num_blobs: 32
+  seed_radius: 20.0
+  proximity_bias: 0.5
+decoders:
+  use_blob_interaction: true
+training:
+  lr: 0.001
+  weight_decay: 0.0
+  batch_size: 128
+  epochs: 60
+  warmup_epochs: 5
+objective:
+  hoyer_weight: 0.01
+selection:
+  metric: macro_f1
+  patience: 15
+  min_delta: 0.001

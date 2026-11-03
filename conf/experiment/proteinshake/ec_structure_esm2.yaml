@@ -1,0 +1,32 @@
+# @package _global_
+# Reproduces the printed Table 1 cell: BioBlobs on ec (structure split) with ESM2-T30.
+defaults:
+  - override /datasets: ec
+  - override /encoders: esm2_static
+  - override /partitioners: bioblobs
+  - override /decoders: mil
+  - override /tasks: multi_class
+  - override /training: proteinshake
+
+name: proteinshake/ec_structure_esm2
+datasets:
+  split: structure
+  ec_level: 3
+partitioners:
+  num_blobs: 16
+  seed_radius: 8.0
+  proximity_bias: 0.5
+decoders:
+  use_blob_interaction: false
+training:
+  lr: 0.001
+  weight_decay: 0.0
+  batch_size: 128
+  epochs: 60
+  warmup_epochs: 5
+objective:
+  hoyer_weight: 0.3
+selection:
+  metric: macro_f1
+  patience: 15
+  min_delta: 0.0
