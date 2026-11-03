@@ -7,6 +7,21 @@ its logs. The paper reports the mean and sample standard deviation over three se
 
 ## 1. Prepare the data
 
+The ProteinShake and VenusX structures, labels and splits, and the VenusX embeddings behind the
+paper, are in the Hugging Face dataset `xwang112358/BioBlobs-data`. Download it as `data/` and
+unpack the structures:
+
+```bash
+hf download xwang112358/BioBlobs-data --repo-type dataset --local-dir data
+for f in data/*_proteinshake/pdb.tar.gz data/venusx_site_fragment/*/MF50/pdb.tar.gz; do
+  tar -xzf "$f" -C "$(dirname "$f")"
+done
+```
+
+The download is 38.2 GB, of which 33.0 GB are the VenusX embeddings. Add
+`--exclude "*_static_cache_mmap/*"` to skip them. The preparation scripts below find the unpacked
+files and skip their own download.
+
 Do this once per dataset and encoder. ESM2-T30 (`facebook/esm2_t30_150M_UR50D`) and SaProt-650M
 (`westlake-repl/SaProt_650M_PDB`) download from Hugging Face. SaProt also needs Foldseek.
 
@@ -27,6 +42,17 @@ and add `--pdb-dir data/<task>_proteinshake/pdb --foldseek-bin <path to foldseek
 
 ```bash
 python preprocessing/prepare_venusx.py --target Act --split-strategy MF50 --data-dir data
+```
+
+This parses the structures. Training then reads the downloaded ESM2-T30 and SaProt-650M embeddings.
+They lack 84 proteins (11, 10, 53 and 10 for `Act`, `BindI`, `Evo` and `Motif`) whose AlphaFold2
+structure has residues past the end of the VenusX site annotation, which the paper's embedding build
+skipped. Training leaves these proteins out of every split, which gives the paper's test sets of
+186, 203, 1,291 and 249 samples. To build the embeddings yourself, run the command below for each
+encoder. Training needs both encoders' embeddings to cover the same proteins. A fresh build covers
+every protein and gives test sets of 186, 205, 1,297 and 251 samples.
+
+```bash
 python preprocessing/prepare_plm_cache.py \
     --structures data/venusx_site_fragment/Act/MF50/cache/uid_structures_min_completion_0p95.pt \
     --key-field protein_uid --encoder esm2_static \
@@ -68,8 +94,8 @@ python train_bioblobs.py -m +experiment=proteinshake/ec_sequence_esm2 training.s
 | Table 1, attention pooling | as mean pooling, with `decoders=attention_pool` | as above |
 | Table 1, GCN, GIN and GAT | `encoders=<gcn\|gin\|gat>_<esm2\|saprot> partitioners=none decoders=mean_pool datasets.edge_types=eps_8` | as above |
 | Table 1, DiffPool, TopK and SAGPool | `partitioners=<diffpool\|topk\|sagpool> datasets.edge_types=eps_8` | as above |
-| Tables 2, 10 and 11, BioBlobs | `+experiment=venusx/<target>_<encoder>_labelfree` | `evaluate.py --checkpoint <run>/best.ckpt --score weighted_membership --out <dir>` |
-| Tables 2, 10 and 11, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
+| Tables 2 and 10, BioBlobs | `+experiment=venusx/<target>_<encoder>_labelfree` | `evaluate.py --checkpoint <run>/best.ckpt --score weighted_membership --out <dir>` |
+| Tables 2 and 10, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
 | Figure 3 and Tables 8 and 9, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
 
 Use `tasks=multi_label selection.metric=fmax` for GO-MF and `tasks=multi_class` for the other
@@ -87,7 +113,7 @@ comparators trained at batch size 32 for up to 100 epochs, and the Pfam, GO-MF a
 comparators at batch size 16 for up to 60 epochs. Figure 2 and the appendix grids vary `partitioners.num_blobs` (K),
 `partitioners.seed_radius` (r) and `objective.hoyer_weight` (λ_H) on top of an experiment config.
 
-**VenusX baselines** (Tables 2, 10 and 11). Train mean or attention pooling with
+**VenusX baselines** (Tables 2 and 10). Train mean or attention pooling with
 
 ```bash
 python train_bioblobs.py -m datasets=venusx datasets.target=Act datasets.site_supervised=true \

@@ -1,7 +1,10 @@
 # BioBlobs
 
 Code for **Unsupervised discovery of Functional Substructures** by Xin Wang, Kaiwen Shi and
-Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632)
+Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632) ·
+[Model](https://huggingface.co/xwang112358/BioBlobs) ·
+[Data](https://huggingface.co/datasets/xwang112358/BioBlobs-data) ·
+Blob viewer (link coming soon) <!-- TODO: replace with the blob viewer URL -->
 
 BioBlobs predicts protein function from a small set of learned, spatially local substructures
 called blobs. It works on frozen residue embeddings from a protein language model (ESM2 or SaProt)
@@ -49,6 +52,9 @@ python evaluate.py --checkpoint outputs/venusx/act_esm2_labelfree/seed1/best.ckp
     --score weighted_membership --out results/act_esm2_labelfree_seed1
 ```
 
+The ProteinShake and VenusX structures, labels and splits, and the VenusX embeddings behind the
+paper, are in the dataset repository
+[xwang112358/BioBlobs-data](https://huggingface.co/datasets/xwang112358/BioBlobs-data).
 [docs/REPRODUCE.md](docs/REPRODUCE.md) gives the data preparation steps and the command behind each
 table and figure.
 
