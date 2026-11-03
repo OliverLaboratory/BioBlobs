@@ -3,13 +3,14 @@
 Code for **Unsupervised discovery of Functional Substructures** by Xin Wang, Kaiwen Shi and
 Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632) ·
 [Model](https://huggingface.co/xwang112358/BioBlobs) ·
-[Data](https://huggingface.co/datasets/xwang112358/BioBlobs-data) ·
-Blob viewer (link coming soon) <!-- TODO: replace with the blob viewer URL -->
+[Data](https://huggingface.co/datasets/xwang112358/BioBlobs-data)
 
 BioBlobs predicts protein function from a small set of learned, spatially local substructures
 called blobs. It works on frozen residue embeddings from a protein language model (ESM2 or SaProt)
 and the protein's structure. The blobs that carry a prediction point to candidate functional
 sites, although the model never sees residue-level labels.
+
+![The BioBlobs pipeline](docs/pipeline.png)
 
 ## Install
 
@@ -42,6 +43,9 @@ This writes `results/predictions.csv` with the top EC class of each enzyme, and 
 enzyme with the top classes, the blobs ranked by importance score with their residue numbers, and
 per-residue scores. The paper scores catalytic residues with `max_membership`.
 [docs/PREDICT.md](docs/PREDICT.md) describes the options and outputs.
+
+The [interactive viewer](https://claude.ai/artifact/NgjRoS48FWXDXqUsPHixib?sk=RVp0Tue26QxS0SMwy_-GAg#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
+catalytic residues.
 
 ## Train and evaluate
 
