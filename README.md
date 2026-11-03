@@ -44,7 +44,7 @@ enzyme with the top classes, the blobs ranked by importance score with their res
 per-residue scores. The paper scores catalytic residues with `max_membership`.
 [docs/PREDICT.md](docs/PREDICT.md) describes the options and outputs.
 
-The [interactive viewer](https://claude.ai/artifact/NgjRoS48FWXDXqUsPHixib?sk=RVp0Tue26QxS0SMwy_-GAg#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
+The [interactive viewer](https://oliverlaboratory.com/resources/bioblobs/#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
 catalytic residues.
 
 ![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)
