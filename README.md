@@ -10,6 +10,9 @@ called blobs. It works on frozen residue embeddings from a protein language mode
 and the protein's structure. The blobs that carry a prediction point to candidate functional
 sites, although the model never sees residue-level labels.
 
+This `baselines` branch adds the paper's comparison methods and baselines. The `main` branch holds
+BioBlobs only.
+
 ![The BioBlobs pipeline](docs/pipeline.png)
 
 ## Install
@@ -85,7 +88,7 @@ bioblobs/
   localization/         residue scores, AUROC / AUPRC / F1@L, score baselines
 conf/                   Hydra configs, with the paper's settings in conf/experiment/
 preprocessing/          dataset download, structure parsing and embedding caches
-baselines/mcsa/         wrappers for the third-party M-CSA baselines
+baselines/mcsa/         M-CSA localization baselines and the table script
 data/mcsa/              M-CSA chain annotations and the evaluated enzyme lists
 tests/                  CPU smoke tests
 ```

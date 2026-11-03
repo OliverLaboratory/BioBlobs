@@ -2,7 +2,7 @@
 
 Code for every baseline row of the paper's M-CSA localization table. The
 three published models below run through thin wrappers in their own
-environments; the [in-house baselines](#in-house-baselines-and-the-table) and
+environments. The [in-house baselines](#in-house-baselines-and-the-table) and
 the table itself run in this repository's environment.
 
 The wrappers load each model's released weights unchanged and reproduce one

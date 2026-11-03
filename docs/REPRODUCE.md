@@ -135,9 +135,8 @@ python evaluate.py --checkpoint bioblobs-mcsa-rvq-k8 --mcsa-features data/mcsa/f
     --mcsa-ids data/mcsa/evaluation_ids.txt --score max_membership --out results/mcsa
 ```
 
-This reproduces the BioBlobs row of Table 9. The third-party baselines
-(ProtDETR, ProteInfer and DeepFRI) run in their own environments, as described in
-[baselines/mcsa/README.md](../baselines/mcsa/README.md).
+This reproduces the BioBlobs row of Table 9. [baselines/mcsa/README.md](../baselines/mcsa/README.md)
+gives the commands for every baseline row of Table 9 and Figure 3A and for the table itself.
 
 ## 3. Notes
 
