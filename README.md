@@ -26,20 +26,22 @@ source .venv/bin/activate
 ESM2 and SaProt weights download from Hugging Face on first use. SaProt also needs
 [Foldseek](https://github.com/steineggerlab/foldseek) to compute structure tokens.
 
-## Predict function and blobs for your own proteins
+## Predict EC numbers and catalytic sites for your enzymes
 
-The released model predicts third-level EC classes (242 classes) and is the model behind the
-paper's M-CSA results. Download it from [Hugging Face](https://huggingface.co/xwang112358/BioBlobs)
-and run it:
+The released model predicts an enzyme's Enzyme Commission (EC) number to the third level (242
+classes) and infers its catalytic site from the blobs, without residue-level labels. It is the
+model behind the paper's M-CSA results. Download it from
+[Hugging Face](https://huggingface.co/xwang112358/BioBlobs) and run it on your enzyme structures:
 
 ```bash
 hf download xwang112358/BioBlobs --local-dir bioblobs-mcsa-rvq-k8
 python inference.py --model bioblobs-mcsa-rvq-k8 --pdb-dir my_pdbs --out results
 ```
 
-This writes `results/predictions.csv` with the top class of each protein, and one JSON file per
-protein with the top classes, the blobs ranked by importance score with their residue numbers, and
-per-residue scores. [INFERENCE.md](INFERENCE.md) describes the options and outputs.
+This writes `results/predictions.csv` with the top EC class of each enzyme, and one JSON file per
+enzyme with the top classes, the blobs ranked by importance score with their residue numbers, and
+per-residue scores. The paper scores catalytic residues with `max_membership`.
+[docs/PREDICT.md](docs/PREDICT.md) describes the options and outputs.
 
 ## Train and evaluate
 
@@ -77,20 +79,6 @@ baselines/mcsa/         wrappers for the third-party M-CSA baselines
 data/mcsa/              M-CSA chain annotations and the evaluated enzyme lists
 tests/                  CPU smoke tests
 ```
-
-## Paper to code
-
-| Component | Paper | Code |
-| --- | --- | --- |
-| Protein encoder (frozen ESM2-T30 or SaProt-650M) | §3.1 | `bioblobs/modules/encoder.py`, `bioblobs/modules/plm.py` |
-| Neural blob partitioner: seed selection, blob expansion | §3.2 | `NeuralBlobPartitioner.select_seeds`, `.expand_blobs` in `bioblobs/modules/partitioner.py` |
-| MIL predictor: blob embeddings, feature transform, attention gate, prediction head | §3.3 | `MILPredictor` in `bioblobs/modules/mil_predictor.py` |
-| Residue scores: maximum and attention-weighted membership | §3.3 | `max_membership`, `weighted_membership` in `bioblobs/localization/scores.py` |
-| Training objective with Hoyer sparsity | §3.4 | `hoyer_sparsity` in `bioblobs/objectives.py`, `BioBlobsModule.loss` |
-| Residual vector quantization | Appendix | `ResidualVQ` in `bioblobs/modules/rvq.py` |
-| Seed alignment (site-supervised VenusX models) | Appendix | `seed_alignment` in `bioblobs/objectives.py` |
-| Comparators: mean and attention pooling, DiffPool, TopK, SAGPool, GCN, GIN, GAT | §4 | `bioblobs/modules/pooling.py`, `bioblobs/modules/gnn.py` |
-| Localization metrics and score baselines | Appendix | `bioblobs/localization/metrics.py`, `bioblobs/localization/baselines.py` |
 
 ## Data
 

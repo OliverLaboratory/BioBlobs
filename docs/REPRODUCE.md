@@ -139,24 +139,7 @@ This reproduces the BioBlobs row of Table 9. The third-party baselines
 (ProtDETR, ProteInfer and DeepFRI) run in their own environments, as described in
 [baselines/mcsa/README.md](../baselines/mcsa/README.md).
 
-## 3. Hardware and run times
-
-| Runs | Original hardware | Time per run |
-| --- | --- | --- |
-| Table 1, BioBlobs with ESM2-T30 | 1× NVIDIA H100 80 GB | 7–27 min for EC, Pfam and SCOP, about 1 h for GO-MF |
-| Table 1, BioBlobs with SaProt-650M | 1× NVIDIA RTX 5090 | up to about 1 h, and up to a few hours for GO-MF |
-| Table 1, mean and attention pooling | 1× H100 or RTX 5090 | 3–46 min, longest for GO-MF |
-| Table 1, GCN, GIN, GAT, DiffPool, TopK and SAGPool | 1× H200 or H100 | not recorded |
-| VenusX, BioBlobs | 1× RTX 5090 or H100 | 3–58 min, longest for Evo |
-| M-CSA model | 1 GPU | about 70 s per epoch, 100 epochs |
-| M-CSA evaluation | CPU | minutes |
-
-GO-MF needs 35–50 GB of host memory per run, plus room to cache its 25 GB embedding file. On a
-host with 62 GB of RAM, train GO-MF with `training.num_workers=1` and Pfam with
-`training.num_workers=2`, because each data-loader worker gradually copies part of the dataset.
-The worker count does not change training.
-
-## 4. Notes
+## 3. Notes
 
 - `prepare_proteinshake.py` writes the data caches in split-file order, which differs from the order
   of the original runs. The proteins, sequences and coordinates are the same, but retrained models will

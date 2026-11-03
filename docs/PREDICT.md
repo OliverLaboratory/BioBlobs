@@ -1,7 +1,8 @@
-# Inference
+# Predict EC numbers and catalytic sites
 
-`inference.py` predicts function classes, blobs and residue scores for your own PDB files. It
-parses each structure, computes residue embeddings with the model's protein language model, and
+`inference.py` runs a BioBlobs model on your own PDB files. The released model predicts each
+enzyme's EC number to the third level and scores every residue as a candidate catalytic residue.
+It parses each structure, computes residue embeddings with the model's protein language model, and
 runs BioBlobs. No precomputed caches are needed.
 
 ## Models
