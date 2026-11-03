@@ -110,9 +110,10 @@ def train(cfg: DictConfig, output_dir: str | Path) -> dict[str, Any]:
         default_root_dir=output_dir,
     )
     trainer.fit(module, loader(splits.train, True), loader(splits.val, False))
+    best = checkpoint.best_model_score  # a tensor; 0.0 is a valid score, not a missing one
     result: dict[str, Any] = {
         "best_checkpoint": checkpoint.best_model_path,
-        f"best_{monitor}": float(checkpoint.best_model_score or float("nan")),
+        f"best_{monitor}": float("nan") if best is None else float(best),
     }
     if splits.test is not None:
         tested = trainer.test(
