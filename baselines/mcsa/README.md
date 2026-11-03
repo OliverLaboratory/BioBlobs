@@ -1,10 +1,12 @@
 # M-CSA localization baselines
 
-Thin wrappers around three third-party models used as published-model
-baselines for catalytic-residue localization on M-CSA (see the paper's
-"Baselines for Functional Site Localization" appendix). Each wrapper loads
-the model's released weights unchanged and reproduces one published
-attribution method as a per-residue score. These scripts do not retrain or
+Code for every baseline row of the paper's M-CSA localization table. The
+three published models below run through thin wrappers in their own
+environments; the [in-house baselines](#in-house-baselines-and-the-table) and
+the table itself run in this repository's environment.
+
+The wrappers load each model's released weights unchanged and reproduce one
+published attribution method as a per-residue score. They do not retrain or
 fine-tune anything.
 
 | Baseline | One-line description |
@@ -173,3 +175,45 @@ Scores keep their original sign and scale from each upstream method (CAM
 and encoder/decoder attention are signed or unit-norm; DeepFRI's Grad-CAM
 is rescaled to `[0, 1]` by the upstream implementation itself) -- no
 additional normalization is applied here.
+
+## In-house baselines and the table
+
+These scripts run in this repository's environment. Each writes the same
+`{id: [score, ...]}` file, in the residue order of the M-CSA feature file
+(`preprocessing/mcsa/build_features.py --max-len 1022`), for the 74 ids of
+`data/mcsa/evaluation_ids.txt` by default. The wrapper outputs above follow the
+same order for these 74 chains.
+
+| Row | Script |
+| --- | --- |
+| SAE (summed magnitude, latent count) | `sae.py train`, then `sae.py score` |
+| ESM2 attention | `esm2_attention.py` |
+| Mean pooling (IG, gradient × input, Grad-CAM) | `meanpool_saliency.py`, on a `+experiment=mcsa/meanpool` checkpoint |
+| Burial (−rSASA), uniform random | `heuristics.py burial`, `heuristics.py random` |
+| Linear probe | `linear_probe.py` |
+| The table | `evaluate_scores.py` |
+
+No M-CSA residue label informs any of these baselines except the linear probe,
+which is trained on them and serves as a supervised ceiling. The SAE and the
+probe need `clusters_30.tsv` from `preprocessing/mcsa/build_homology_excluded_train.py`.
+
+```bash
+F=data/mcsa/features.pt; P=data/mcsa_raw/pdbs
+C=preprocessing_work/mcsa_homology_filter/clusters_30.tsv
+python train_bioblobs.py +experiment=mcsa/meanpool
+python baselines/mcsa/meanpool_saliency.py --checkpoint outputs/mcsa/meanpool/seed0/best.ckpt \
+    --token-map data/swissprot_ec/token_map.json --features $F --out scores/meanpool
+python baselines/mcsa/sae.py train --corpus data/swissprot_ec/train_split_train.csv \
+    --clusters $C --out scores/sae.pt
+python baselines/mcsa/sae.py score --sae scores/sae.pt --features $F --pdb-dir $P --out scores/sae
+python baselines/mcsa/esm2_attention.py --features $F --pdb-dir $P --out scores/esm2_attention.json
+python baselines/mcsa/heuristics.py burial --features $F --pdb-dir $P --out scores/burial.json
+python baselines/mcsa/heuristics.py random --features $F --out scores/random.json
+python baselines/mcsa/linear_probe.py --pdb-dir $P --clusters $C --out scores/linear_probe.json
+python evaluate.py --checkpoint bioblobs-mcsa-rvq-k8 --mcsa-features $F \
+    --mcsa-ids data/mcsa/evaluation_ids.txt --score max_membership --out results/mcsa
+python baselines/mcsa/evaluate_scores.py --features $F --out results/mcsa_table \
+    --score BioBlobs=results/mcsa/per_protein.jsonl \
+    --score "SAE (summed magnitude)=scores/sae_magnitude.json" \
+    --score "Linear probe=scores/linear_probe.json"   # one --score per row
+```

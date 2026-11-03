@@ -1,0 +1,21 @@
+# @package _global_
+# The mean-pooling EC-L3 classifier explained by the M-CSA attribution baselines (integrated
+# gradients, gradient x input and Grad-CAM; baselines/mcsa/meanpool_saliency.py). Same data and
+# schedule as mcsa/rvq_k8, with the original run's learning rate and no projection layer.
+defaults:
+  - override /datasets: swissprot_ec
+  - override /encoders: esm2_static
+  - override /partitioners: none
+  - override /decoders: mean_pool
+  - override /training: swissprot_ec
+
+name: mcsa/meanpool
+decoders:
+  proj_dim: null
+training:
+  lr: 5.0e-4
+objective:
+  class_balanced_beta: 0.9999
+selection:
+  metric: macro_f1_fixed_vocab
+  patience: 1000                 # no early stopping: best validation epoch of 100

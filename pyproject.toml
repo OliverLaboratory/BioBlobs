@@ -34,6 +34,7 @@ dependencies = [
     "datasets>=3.0",
     "proteinshake>=0.3,<1",
     "biopandas>=0.5,<1",
+    "biopython>=1.80,<2",  # burial (-rSASA) M-CSA baseline
     # Integrated-gradients baseline (M-CSA).
     "captum>=0.7,<1",
 ]
@@ -82,7 +83,14 @@ torch_spline_conv = { index = "pyg-cu128" }
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["baselines/mcsa"]  # run in separate Python 3.7 environments
+# The third-party M-CSA wrappers run in their own (Python 3.7) environments.
+extend-exclude = [
+    "baselines/mcsa/common.py",
+    "baselines/mcsa/make_inputs.py",
+    "baselines/mcsa/deepfri",
+    "baselines/mcsa/protdetr",
+    "baselines/mcsa/proteinfer",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
