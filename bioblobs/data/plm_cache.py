@@ -29,7 +29,7 @@ class _MmapIndex:
         self.root = Path(root)
         if not (self.root / "meta.pt").exists() or not (self.root / data_file).exists():
             raise FileNotFoundError(f"No {data_file} + meta.pt under {self.root}")
-        self.meta = torch.load(self.root / "meta.pt", weights_only=False)
+        self.meta = torch.load(self.root / "meta.pt", weights_only=True)
         self.names: list[str] = list(self.meta["names"])
         self.offsets = np.asarray(self.meta["offsets"], dtype=np.int64)
         self._index = {name: i for i, name in enumerate(self.names)}

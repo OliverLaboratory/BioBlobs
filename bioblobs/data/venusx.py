@@ -133,7 +133,7 @@ def _cache_names(root: Path, subdir: str) -> set[str]:
         raise FileNotFoundError(
             f"No {meta_path}; build the embedding cache with preprocessing/prepare_plm_cache.py"
         )
-    meta = torch.load(meta_path, map_location="cpu", weights_only=False)
+    meta = torch.load(meta_path, map_location="cpu", weights_only=True)
     return set(meta["names"])
 
 

@@ -176,7 +176,7 @@ def _existing_keys(out: Path) -> set[str]:
     meta_path = out / "meta.pt"
     if not meta_path.exists():
         return set()
-    meta = torch.load(meta_path, map_location="cpu", weights_only=False)
+    meta = torch.load(meta_path, map_location="cpu", weights_only=True)
     return set(meta.get("names", []))
 
 
