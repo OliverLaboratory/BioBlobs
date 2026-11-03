@@ -47,6 +47,12 @@ per-residue scores. The paper scores catalytic residues with `max_membership`.
 The [interactive viewer](https://claude.ai/artifact/NgjRoS48FWXDXqUsPHixib?sk=RVp0Tue26QxS0SMwy_-GAg#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
 catalytic residues.
 
+![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)
+
+*Figure 3 of the paper. A: catalytic-residue localization on 74 held-out M-CSA enzymes. B: MIL
+attention ranks blobs that contain catalytic residues above the other blobs. C: the three
+highest-attention blobs in four enzymes.*
+
 ## Train and evaluate
 
 Each reported setting has an experiment config in `conf/experiment/`. After preparing a dataset
