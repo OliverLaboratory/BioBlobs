@@ -52,7 +52,7 @@ catalytic residues.
 
 ![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)
 
-*Figure 3 of the paper. A: catalytic-residue localization on 74 held-out M-CSA enzymes. B: MIL
+*Figure 2 of the paper. A: catalytic-residue localization on 74 held-out M-CSA enzymes. B: MIL
 attention ranks blobs that contain catalytic residues above the other blobs. C: the three
 highest-attention blobs in four enzymes.*
 
