@@ -94,17 +94,17 @@ python train_bioblobs.py -m +experiment=proteinshake/ec_sequence_esm2 training.s
 | Table 1, BioBlobs with SaProt-650M | `+experiment=proteinshake/<task>_<split>_saprot` | as above |
 | Tables 2 and 10, BioBlobs | `+experiment=venusx/<target>_<encoder>_labelfree` | `evaluate.py --checkpoint <run>/best.ckpt --score weighted_membership --out <dir>` |
 | Tables 2 and 10, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
-| Figure 3 and Tables 8 and 9, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
+| Figure 2 and Tables 8 and 9, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
 
 Table 1 reports Fmax for GO-MF and macro-F1 for the other tasks. The experiment files set the
 matching task type and selection metric.
 
 **Hyperparameters.** The ESM2-T30 and SaProt-650M files in `conf/experiment/proteinshake/` hold the
-settings behind the printed Table 1 cells, from the search grids in the appendix. Figure 2 and
+settings behind the printed Table 1 cells, from the search grids in the appendix. Figure 3 and
 the appendix grids vary `partitioners.num_blobs` (K), `partitioners.seed_radius` (r) and
 `objective.hoyer_weight` (λ_H) on top of an experiment config.
 
-**M-CSA** (Figure 3 and Table 9). Evaluate the released model, or your own `mcsa/rvq_k8` run, on
+**M-CSA** (Figure 2 and Table 9). Evaluate the released model, or your own `mcsa/rvq_k8` run, on
 the 74 held-out enzymes:
 
 ```bash
