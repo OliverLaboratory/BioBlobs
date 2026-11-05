@@ -1,4 +1,4 @@
-"""Residual vector quantization of blob embeddings (Appendix, RVQ).
+"""Residual vector quantization of blob embeddings.
 
 Each blob embedding is L2-normalized and quantized by a stack of codebooks, where level q
 quantizes the residual left by levels 0..q-1; the blob is replaced by the sum of its codes.
