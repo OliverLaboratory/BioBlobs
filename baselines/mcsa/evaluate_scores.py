@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""M-CSA localization metrics of any set of residue-score files (the appendix M-CSA table).
+"""M-CSA localization metrics of any set of residue-score files.
 
 Each ``--score NAME=PATH`` is a ``{id: [score, ...]}`` JSON file in the residue order of the
 M-CSA feature file (every baseline here), or the ``per_protein.jsonl`` that ``evaluate.py``

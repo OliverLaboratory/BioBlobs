@@ -94,26 +94,26 @@ python train_bioblobs.py -m +experiment=proteinshake/ec_sequence_esm2 training.s
 | Table 1, attention pooling | as mean pooling, with `decoders=attention_pool` | as above |
 | Table 1, GCN, GIN and GAT | `encoders=<gcn\|gin\|gat>_<esm2\|saprot> partitioners=none decoders=mean_pool datasets.edge_types=eps_8` | as above |
 | Table 1, DiffPool, TopK and SAGPool | `partitioners=<diffpool\|topk\|sagpool> datasets.edge_types=eps_8` | as above |
-| Tables 2 and 10, BioBlobs | `+experiment=venusx/<target>_<encoder>_labelfree` | `evaluate.py --checkpoint <run>/best.ckpt --score weighted_membership --out <dir>` |
-| Tables 2 and 10, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
-| Figure 2 and Tables 8 and 9, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
+| Table 2, BioBlobs | `+experiment=venusx/<target>_<encoder>_labelfree` | `evaluate.py --checkpoint <run>/best.ckpt --score weighted_membership --out <dir>` |
+| Table 2, BioBlobs with seed alignment | `+experiment=venusx/<target>_<encoder>_seedalign` | as above |
+| Figure 2, M-CSA model | `+experiment=mcsa/rvq_k8` | `evaluate.py` in M-CSA mode, below |
 
 Use `tasks=multi_label selection.metric=fmax` for GO-MF and `tasks=multi_class` for the other
 ProteinShake tasks. Table 1 reports Fmax for GO-MF and macro-F1 for the other tasks. The BioBlobs
 experiment files already set these.
 
 **Hyperparameters.** The ESM2-T30 and SaProt-650M files in `conf/experiment/proteinshake/` hold the
-settings behind the printed Table 1 cells, from the search grids in the appendix. The comparators
-were tuned per cell on validation, with the search spaces listed in the appendix. The config
+settings behind the printed Table 1 cells. The comparators
+were tuned per cell on validation. The config
 defaults are not those tuned values. For each cell, set
 `training.lr`, `training.batch_size`, `training.epochs` and the comparator's own parameters
 (`encoders.gnn.num_layers` and `encoders.gnn.dropout` for the GNNs, `partitioners.max_clusters` for
 DiffPool, `partitioners.ratio` for TopK and SAGPool) to the selected values. The EC and SCOP-FAM
 comparators trained at batch size 32 for up to 100 epochs, and the Pfam, GO-MF and SCOP-SF
-comparators at batch size 16 for up to 60 epochs. Figure 3 and the appendix grids vary `partitioners.num_blobs` (K),
+comparators at batch size 16 for up to 60 epochs. Figure 3 varies `partitioners.num_blobs` (K),
 `partitioners.seed_radius` (r) and `objective.hoyer_weight` (λ_H) on top of an experiment config.
 
-**VenusX baselines** (Tables 2 and 10). Train mean or attention pooling with
+**VenusX baselines** (Table 2). Train mean or attention pooling with
 
 ```bash
 python train_bioblobs.py -m datasets=venusx datasets.target=Act datasets.site_supervised=true \
@@ -127,7 +127,7 @@ For mean pooling, use `decoders=mean_pool decoders.masked=true`. Score residues 
 `evaluate.py --score attention` for attention pooling and with `--score integrated_gradients` on
 the mean-pooling model. `--score burial` and `--score random` give the two controls.
 
-**M-CSA** (Figure 2 and Table 9). Evaluate the released model, or your own `mcsa/rvq_k8` run, on
+**M-CSA** (Figure 2). Evaluate the released model, or your own `mcsa/rvq_k8` run, on
 the 74 held-out enzymes:
 
 ```bash
@@ -135,8 +135,8 @@ python evaluate.py --checkpoint bioblobs-mcsa-rvq-k8 --mcsa-features data/mcsa/f
     --mcsa-ids data/mcsa/evaluation_ids.txt --score max_membership --out results/mcsa
 ```
 
-This reproduces the BioBlobs row of Table 9. [baselines/mcsa/README.md](../baselines/mcsa/README.md)
-gives the commands for every baseline row of Table 9 and Figure 2A and for the table itself.
+This reproduces the BioBlobs result in Figure 2A. [baselines/mcsa/README.md](../baselines/mcsa/README.md)
+gives the commands for every M-CSA baseline and for the comparison table.
 
 ## 3. Notes
 
