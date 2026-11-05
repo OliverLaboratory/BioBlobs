@@ -1,5 +1,5 @@
 # @package _global_
-# The M-CSA model (Figure 3, Tables 8 and 9): BioBlobs with RVQ, trained on SwissProt EC-L3.
+# The M-CSA model (Figure 2, Tables 8 and 9): BioBlobs with RVQ, trained on SwissProt EC-L3.
 # The training arguments of the original run were not saved with its config; they are taken
 # from the run's recipe and its logged learning rates.
 defaults:

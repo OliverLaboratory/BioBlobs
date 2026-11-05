@@ -1,4 +1,4 @@
-# The 74 held-out chains evaluated in Figure 3 and Appendix Table 9: held-out
+# The 74 held-out chains evaluated in Figure 2 and Appendix Table 9: held-out
 # chains for which every compared method produces scores and the chain has
 # at least one catalytic and one non-catalytic residue.
 1a0i_A

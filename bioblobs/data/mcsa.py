@@ -1,7 +1,7 @@
 """M-CSA catalytic-site evaluation data.
 
 Loads the curated single-chain M-CSA (Mechanism and Catalytic Site Atlas) enzymes
-used for the catalytic-residue-localization evaluation reported in Figure 3 and
+used for the catalytic-residue-localization evaluation reported in Figure 2 and
 Appendix Table 9.
 
 Inputs (shipped under ``data/mcsa/`` unless noted otherwise):
@@ -19,7 +19,7 @@ Two feature caches exist with different chain-length policies (both windowed ESM
     feat_cache.pt              chains filtered at length <= 1022 (874 of the 886 unique
                                 pdb_chain keys in mcsa_single_chain.json, 892 raw records).
                                 Used for the 74-protein evaluation cohort reported in
-                                Figure 3 and Appendix Table 9.
+                                Figure 2 and Appendix Table 9.
     feat_cache_maxlen1500.pt   chains filtered at length <= 1500 (883 of 886), matching
                                 the training max_len. Used for a full-cohort check over
                                 every cached chain.
