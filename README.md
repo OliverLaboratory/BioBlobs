@@ -2,6 +2,7 @@
 
 Code for **Unsupervised discovery of Functional Substructures** by Xin Wang, Kaiwen Shi and
 Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632) ·
+[Interactive viewer](https://oliverlaboratory.com/resources/bioblobs/) ·
 [Model](https://huggingface.co/xwang112358/BioBlobs) ·
 [Data](https://huggingface.co/datasets/xwang112358/BioBlobs-data)
 
@@ -9,6 +10,10 @@ BioBlobs predicts protein function from a small set of learned, spatially local 
 called blobs. It works on frozen residue embeddings from a protein language model (ESM2 or SaProt)
 and the protein's structure. The blobs that carry a prediction point to candidate functional
 sites, although the model never sees residue-level labels.
+
+> 🔬 **[Explore the blobs in your browser](https://oliverlaboratory.com/resources/bioblobs/#1k32-A)**: the interactive viewer shows
+> BioBlobs blobs on M-CSA enzymes next to their annotated catalytic residues, with nothing to
+> install.
 
 This `baselines` branch adds the paper's comparison methods and baselines. The `main` branch holds
 BioBlobs only.
@@ -50,7 +55,7 @@ per-residue scores. The paper scores catalytic residues with `max_membership`.
 The [interactive viewer](https://oliverlaboratory.com/resources/bioblobs/#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
 catalytic residues.
 
-![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)
+[![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)](https://oliverlaboratory.com/resources/bioblobs/#1k32-A)
 
 *Figure 2 of the paper. A: catalytic-residue localization on 74 held-out M-CSA enzymes. B: MIL
 attention ranks blobs that contain catalytic residues above the other blobs. C: the three
