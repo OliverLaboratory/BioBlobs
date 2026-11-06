@@ -10,9 +10,9 @@ called blobs. It works on frozen residue embeddings from a protein language mode
 and the protein's structure. The blobs that carry a prediction point to candidate functional
 sites, although the model never sees residue-level labels.
 
-> 🔬 **[Explore the blobs in your browser](https://oliverlaboratory.com/resources/bioblobs/#1k32-A)**: the interactive viewer shows
-> BioBlobs blobs on M-CSA enzymes next to their annotated catalytic residues, with nothing to
-> install.
+> 🔬 **[Explore the blobs in your browser](https://oliverlaboratory.com/resources/bioblobs/#1k32-A)**: the interactive viewer lets
+> you compare BioBlobs blobs with the annotated catalytic residues of M-CSA enzymes, with nothing
+> to install.
 
 ![The BioBlobs pipeline](docs/pipeline.png)
 
@@ -48,8 +48,8 @@ enzyme with the top classes, the blobs ranked by importance score with their res
 per-residue scores. The paper scores catalytic residues with `max_membership`.
 [docs/PREDICT.md](docs/PREDICT.md) describes the options and outputs.
 
-The [interactive viewer](https://oliverlaboratory.com/resources/bioblobs/#1k32-A) shows the model's blobs on M-CSA enzymes next to their annotated
-catalytic residues.
+The [interactive viewer](https://oliverlaboratory.com/resources/bioblobs/#1k32-A) lets you compare the model's blobs with the
+annotated catalytic residues of M-CSA enzymes.
 
 [![BioBlobs blobs agree with M-CSA catalytic sites](docs/mcsa.png)](https://oliverlaboratory.com/resources/bioblobs/#1k32-A)
 
