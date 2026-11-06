@@ -2,7 +2,6 @@
 
 Code for **Unsupervised discovery of Functional Substructures** by Xin Wang, Kaiwen Shi and
 Carlos Oliver (NeurIPS 2026). [Paper](https://arxiv.org/abs/2510.01632) ·
-[Interactive viewer](https://oliverlaboratory.com/resources/bioblobs/) ·
 [Model](https://huggingface.co/xwang112358/BioBlobs) ·
 [Data](https://huggingface.co/datasets/xwang112358/BioBlobs-data)
 
