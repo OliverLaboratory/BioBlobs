@@ -217,3 +217,4 @@ python baselines/mcsa/evaluate_scores.py --features $F --out results/mcsa_table 
     --score "SAE (summed magnitude)=scores/sae_magnitude.json" \
     --score "Linear probe=scores/linear_probe.json"   # one --score per row
 ```
+

@@ -155,3 +155,4 @@ gives the commands for every M-CSA baseline and for the comparison table.
   `mean_pool`, `datasets=go` is `go_mf`, `tasks=multi-class` is `multi_class`,
   `partitioners.num_blobs_per_protein` is `partitioners.num_blobs`, and the loss weights moved to
   the `objective` block (for example `objective.hoyer_weight`).
+
