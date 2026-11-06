@@ -148,3 +148,4 @@ def test_metrics() -> None:
     assert multiclass_metrics([0, 1, 2], logits, 4)["macro_f1"] == 1.0
     assert multiclass_metrics([0, 1, 2], logits, 4)["macro_f1_fixed_vocab"] == 0.75
     assert fmax(torch.eye(3).numpy(), (torch.eye(3) * 10 - 5).numpy())["fmax"] == 1.0
+

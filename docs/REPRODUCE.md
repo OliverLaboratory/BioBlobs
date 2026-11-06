@@ -129,3 +129,4 @@ This reproduces the BioBlobs result in Figure 2A.
 - Compared with the May 2026 release, several config names changed: `datasets=go` is `go_mf`, `tasks=multi-class` is `multi_class`,
   `partitioners.num_blobs_per_protein` is `partitioners.num_blobs`, and the loss weights moved to
   the `objective` block (for example `objective.hoyer_weight`).
+
